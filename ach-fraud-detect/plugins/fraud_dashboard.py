@@ -1,4 +1,4 @@
-"""Airflow plugin exposing a fraud detection dashboard at ``/fraud-dashboard``.
+"""Airflow plugin exposing an ACH fraud detection dashboard at ``/fraud-dashboard``.
 
 Adds a FastAPI application to the Airflow API server that serves:
 
@@ -32,7 +32,7 @@ from include.fraud_utils import (
 )
 
 
-app = FastAPI(title="Fraud Detection Dashboard", docs_url="/api/docs")
+app = FastAPI(title="ACH Fraud Detection Dashboard", docs_url="/api/docs")
 
 
 # Make sure the SQLite schema exists when the API server boots.
@@ -99,13 +99,13 @@ class FraudDashboardPlugin(AirflowPlugin):
         {
             "app": app,
             "url_prefix": "/fraud-dashboard",
-            "name": "Fraud Dashboard",
+            "name": "ACH Fraud Dashboard",
         }
     ]
 
     external_views = [
         {
-            "name": "Fraud Dashboard",
+            "name": "ACH Fraud Dashboard",
             "href": "/fraud-dashboard/",
             "destination": "nav",
             "icon": "https://raw.githubusercontent.com/twitter/twemoji/master/assets/svg/1f6a8.svg",

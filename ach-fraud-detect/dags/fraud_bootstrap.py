@@ -1,16 +1,15 @@
 """
-## Fraud Bootstrap DAG
+## ACH Fraud Bootstrap DAG
 
 One-shot DAG that:
 
 1. Creates the SQLite tables used by the rest of the demo.
-2. Generates a synthetic IBM-style credit-card transactions seed
-   dataset with an `is_fraud` label.
+2. Reads the labeled ACH payment seed dataset from `include/data/ach_payments.csv`.
 3. Trains a scikit-learn RandomForest fraud detection model on that
-   seed dataset and persists it to `include/models/fraud_model.joblib`.
+    seed dataset and persists it to `include/models/ach_fraud_model.joblib`.
 
 Runs once when the environment first starts. Re-trigger it manually to
-regenerate the seed data / retrain the model.
+retrain the model from the existing seed data.
 """
 
 from __future__ import annotations
@@ -45,22 +44,7 @@ def fraud_bootstrap():
         return str(DB_PATH)
 
     @task
-    def seed_training_data() -> str:
-        """Generate + persist a synthetic IBM-style seed dataset."""
-        from include.fraud_utils import seed_training_dataset
-        from include.fraud_utils.paths import TRAINING_CSV, ensure_dirs
-
-        ensure_dirs()
-        df = seed_training_dataset(n_rows=5000, seed=42)
-        df.to_csv(TRAINING_CSV, index=False)
-        print(
-            f"Wrote {len(df)} training rows to {TRAINING_CSV}. "
-            f"Fraud rate: {df['is_fraud'].mean():.2%}"
-        )
-        return str(TRAINING_CSV)
-
-    @task
-    def train_model(training_csv: str) -> str:
+    def train_model() -> str:
         """Train a RandomForest fraud classifier + save it to disk."""
         import joblib
         import pandas as pd
@@ -69,10 +53,16 @@ def fraud_bootstrap():
         from sklearn.model_selection import train_test_split
 
         from include.fraud_utils import MODEL_PATH, build_feature_frame
+        from include.fraud_utils.paths import TRAINING_CSV
         from include.fraud_utils.paths import ensure_dirs
 
         ensure_dirs()
-        df = pd.read_csv(training_csv)
+        if not TRAINING_CSV.exists():
+            raise FileNotFoundError(
+                f"Seed training data not found at {TRAINING_CSV}. "
+                "Generate the seed CSV separately before triggering this DAG."
+            )
+        df = pd.read_csv(TRAINING_CSV)
         X = build_feature_frame(df.to_dict(orient="records"))
         y = df["is_fraud"].astype(int)
 
@@ -100,10 +90,9 @@ def fraud_bootstrap():
         return str(MODEL_PATH)
 
     db = init_storage()
-    csv = seed_training_data()
-    trained = train_model(csv)
+    trained = train_model()
 
-    db >> csv >> trained
+    db >> trained
 
 
 fraud_bootstrap()
