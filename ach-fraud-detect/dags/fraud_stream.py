@@ -43,6 +43,7 @@ RISK_THRESHOLD = 0.55
 def fraud_stream():
     @task
     def simulate_batch() -> list[dict]:
+        """Create a new batch of simulated ACH payments for this run."""
         from include.fraud_utils import generate_batch, init_db
 
         # Make sure the schema exists even if bootstrap hasn't run yet.
@@ -53,6 +54,7 @@ def fraud_stream():
 
     @task
     def score_batch(batch: list[dict]) -> list[dict]:
+        """Load the saved model and add a fraud score to each payment."""
         import joblib
 
         from include.fraud_utils import MODEL_PATH, build_feature_frame
@@ -71,6 +73,7 @@ def fraud_stream():
 
     @task
     def flag_and_persist(batch: list[dict]) -> dict:
+        """Explain, flag, and save the scored payments to SQLite."""
         from include.fraud_utils import insert_transactions
         from include.fraud_utils.reasons import explain
 
