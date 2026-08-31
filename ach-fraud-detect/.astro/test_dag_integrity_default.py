@@ -134,9 +134,6 @@ def test_file_imports(rel_path, rv):
     else:
         # If rv is "No import errors," consider it a passed test
         print(f"{rel_path} passed the import test")
-n result
-
-
 @pytest.mark.parametrize(
     "rel_path, rv", get_import_errors(), ids=[x[0] for x in get_import_errors()]
 )

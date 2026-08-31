@@ -1,4 +1,4 @@
-"""Shared helpers for the credit-card fraud detection demo."""
+"""Shared helpers for the ACH fraud detection demo."""
 
 from .paths import DB_PATH, MODEL_PATH, ensure_dirs
 from .db import (

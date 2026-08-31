@@ -1,5 +1,5 @@
 """
-## Fraud HITL Review DAG
+## ACH Fraud HITL Review DAG
 
 Triggered by the `flagged_transactions` Asset emitted by `fraud_stream`.
 
@@ -49,11 +49,11 @@ DECISION_OPTIONS = ["Legitimate", "Fraud", "Needs further investigation"]
 def fraud_hitl_review():
     @task
     def collect_pending() -> list[dict]:
-        """Grab up to 10 flagged transactions with no human decision yet."""
+        """Grab up to 10 flagged ACH payments with no human decision yet."""
         from include.fraud_utils import fetch_pending_flagged
 
         pending = fetch_pending_flagged(limit=10)
-        print(f"Found {len(pending)} pending flagged transactions to review.")
+        print(f"Found {len(pending)} pending flagged ACH payments to review.")
         return pending
 
     @task
@@ -62,21 +62,22 @@ def fraud_hitl_review():
         rows = []
         for tx in txs:
             subject = (
-                f"Review flagged transaction "
-                f"${tx['amount']:.2f} @ {tx['merchant']} "
+                f"Review flagged ACH payment "
+                f"${tx['amount']:.2f} to {tx['receiver_name']} "
                 f"(risk {float(tx['fraud_score']):.2f})"
             )
             reasons_md = (
                 "\n".join(f"- {r}" for r in tx.get("reasons") or []) or "- (n/a)"
             )
             body = (
-                f"**Transaction ID:** `{tx['id']}`\n\n"
+                f"**Payment ID:** `{tx['id']}`\n\n"
                 f"**Timestamp:** {tx['ts']}\n\n"
-                f"**User / Card:** {tx['user_id']} / {tx['card_id']}\n\n"
+                f"**Originator / Receiver:** {tx['originator_id']} / {tx['receiver_id']}\n\n"
                 f"**Amount:** ${tx['amount']:.2f}\n\n"
-                f"**Merchant:** {tx['merchant']} - "
-                f"{tx['merchant_city']}, {tx['merchant_state']} (MCC {tx['mcc']})\n\n"
-                f"**Channel:** {tx['use_chip']}\n\n"
+                f"**Originator / Receiver:** {tx['originator_name']} -> {tx['receiver_name']}\n\n"
+                f"**States:** {tx['originator_state']} -> {tx['receiver_state']}\n\n"
+                f"**Payment type / SEC code:** {tx['payment_type']} / {tx['sec_code']}\n\n"
+                f"**Channel:** {tx['channel']}\n\n"
                 f"**Model risk score:** {float(tx['fraud_score']):.2f}\n\n"
                 f"**Reasons flagged:**\n{reasons_md}"
             )

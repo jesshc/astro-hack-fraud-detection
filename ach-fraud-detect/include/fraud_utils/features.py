@@ -1,8 +1,4 @@
-"""Feature engineering for the fraud detection model.
-
-We convert raw IBM-style credit-card transactions into a small numeric
-feature matrix suitable for scikit-learn.
-"""
+"""Feature engineering for ACH payment fraud detection."""
 
 from __future__ import annotations
 
@@ -20,17 +16,20 @@ TRAINING_FEATURES = [
     "day_of_week",
     "is_night",
     "is_weekend",
-    "mcc",
-    "use_chip_encoded",
-    "state_encoded",
+    "account_age_days",
+    "sec_code_encoded",
+    "payment_type_encoded",
+    "channel_encoded",
+    "state_mismatch",
 ]
 
 
-_USE_CHIP_MAP = {
-    "Chip Transaction": 0,
-    "Swipe Transaction": 1,
-    "Online Transaction": 2,
+_SEC_CODE_MAP = {"PPD": 0, "CCD": 1, "WEB": 2, "TEL": 3, "IAT": 4}
+_PAYMENT_TYPE_MAP = {
+    "Payroll": 0, "Vendor payment": 1, "Bill payment": 2,
+    "Direct deposit": 3, "Tax payment": 4,
 }
+_CHANNEL_MAP = {"Online banking": 0, "API": 1, "File upload": 2, "Branch initiated": 3}
 
 
 def _encode_state(state: str) -> int:
@@ -54,10 +53,12 @@ def build_feature_frame(records: Iterable[dict]) -> pd.DataFrame:
 
     df["amount"] = df["amount"].astype(float)
     df["log_amount"] = np.log1p(df["amount"].clip(lower=0))
-    df["mcc"] = df["mcc"].astype(int)
-    df["use_chip_encoded"] = df["use_chip"].map(_USE_CHIP_MAP).fillna(0).astype(int)
-    df["state_encoded"] = (
-        df["merchant_state"].astype(str).map(_encode_state).astype(int)
-    )
+    df["account_age_days"] = df["account_age_days"].astype(int)
+    df["sec_code_encoded"] = df["sec_code"].map(_SEC_CODE_MAP).fillna(0).astype(int)
+    df["payment_type_encoded"] = df["payment_type"].map(_PAYMENT_TYPE_MAP).fillna(0).astype(int)
+    df["channel_encoded"] = df["channel"].map(_CHANNEL_MAP).fillna(0).astype(int)
+    df["state_mismatch"] = (
+        df["originator_state"].astype(str) != df["receiver_state"].astype(str)
+    ).astype(int)
 
     return df[TRAINING_FEATURES]

@@ -11,9 +11,9 @@ INCLUDE_DIR = AIRFLOW_HOME / "include"
 DATA_DIR = INCLUDE_DIR / "data"
 MODEL_DIR = INCLUDE_DIR / "models"
 
-DB_PATH = DATA_DIR / "fraud.db"
-MODEL_PATH = MODEL_DIR / "fraud_model.joblib"
-TRAINING_CSV = DATA_DIR / "ibm_cc_seed.csv"
+DB_PATH = DATA_DIR / "ach_fraud.db"
+MODEL_PATH = MODEL_DIR / "ach_fraud_model.joblib"
+TRAINING_CSV = DATA_DIR / "ach_payments.csv"
 
 
 def ensure_dirs() -> None:

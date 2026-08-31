@@ -1,4 +1,4 @@
-"""SQLite persistence layer for transactions + human decisions.
+"""SQLite persistence layer for ACH payments and human decisions.
 
 Uses SQLite as a lightweight demo store. Not for production use.
 """
@@ -15,17 +15,20 @@ from .paths import DB_PATH, ensure_dirs
 
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS transactions (
+CREATE TABLE IF NOT EXISTS ach_payments (
     id                TEXT PRIMARY KEY,
     ts                TEXT NOT NULL,
-    user_id           INTEGER NOT NULL,
-    card_id           INTEGER NOT NULL,
+    originator_id     TEXT NOT NULL,
+    receiver_id       TEXT NOT NULL,
     amount            REAL NOT NULL,
-    merchant          TEXT NOT NULL,
-    merchant_city     TEXT NOT NULL,
-    merchant_state    TEXT NOT NULL,
-    mcc               INTEGER NOT NULL,
-    use_chip          TEXT NOT NULL,
+    originator_name   TEXT NOT NULL,
+    receiver_name     TEXT NOT NULL,
+    originator_state  TEXT NOT NULL,
+    receiver_state    TEXT NOT NULL,
+    account_age_days  INTEGER NOT NULL,
+    payment_type      TEXT NOT NULL,
+    sec_code          TEXT NOT NULL,
+    channel           TEXT NOT NULL,
     fraud_score       REAL,
     is_suspicious     INTEGER DEFAULT 0,
     reasons           TEXT,
@@ -34,8 +37,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     reviewed_at       TEXT,
     created_at        TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS ix_tx_ts ON transactions(ts DESC);
-CREATE INDEX IF NOT EXISTS ix_tx_flag ON transactions(is_suspicious, human_decision);
+CREATE INDEX IF NOT EXISTS ix_ach_ts ON ach_payments(ts DESC);
+CREATE INDEX IF NOT EXISTS ix_ach_flag ON ach_payments(is_suspicious, human_decision);
 """
 
 
@@ -57,7 +60,7 @@ def init_db() -> None:
 
 
 def insert_transactions(rows: Iterable[dict[str, Any]]) -> int:
-    """Insert a batch of scored transactions. Returns count inserted."""
+    """Insert a batch of scored ACH payments. Returns count inserted."""
     now = datetime.now(timezone.utc).isoformat()
     payload = []
     for r in rows:
@@ -65,14 +68,17 @@ def insert_transactions(rows: Iterable[dict[str, Any]]) -> int:
             (
                 r["id"],
                 r["ts"],
-                int(r["user_id"]),
-                int(r["card_id"]),
+                r["originator_id"],
+                r["receiver_id"],
                 float(r["amount"]),
-                r["merchant"],
-                r["merchant_city"],
-                r["merchant_state"],
-                int(r["mcc"]),
-                r["use_chip"],
+                r["originator_name"],
+                r["receiver_name"],
+                r["originator_state"],
+                r["receiver_state"],
+                int(r["account_age_days"]),
+                r["payment_type"],
+                r["sec_code"],
+                r["channel"],
                 float(r.get("fraud_score", 0.0)),
                 int(bool(r.get("is_suspicious", False))),
                 json.dumps(r.get("reasons", [])),
@@ -85,11 +91,12 @@ def insert_transactions(rows: Iterable[dict[str, Any]]) -> int:
     with connect() as conn:
         conn.executemany(
             """
-            INSERT OR IGNORE INTO transactions
-                (id, ts, user_id, card_id, amount, merchant, merchant_city,
-                 merchant_state, mcc, use_chip, fraud_score, is_suspicious,
+            INSERT OR IGNORE INTO ach_payments
+                (id, ts, originator_id, receiver_id, amount, originator_name,
+                 receiver_name, originator_state, receiver_state, account_age_days,
+                 payment_type, sec_code, channel, fraud_score, is_suspicious,
                  reasons, human_decision, human_notes, reviewed_at, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             payload,
         )
@@ -104,7 +111,7 @@ def update_decision(tx_id: str, decision: str, notes: str | None = None) -> bool
     with connect() as conn:
         cur = conn.execute(
             """
-            UPDATE transactions
+            UPDATE ach_payments
                SET human_decision = ?,
                    human_notes = ?,
                    reviewed_at = ?
@@ -139,7 +146,7 @@ def fetch_summary() -> dict[str, Any]:
                 COALESCE(SUM(CASE WHEN human_decision = 'Fraud' THEN 1 ELSE 0 END), 0) AS confirmed_fraud,
                 COALESCE(SUM(CASE WHEN human_decision = 'Legitimate' THEN 1 ELSE 0 END), 0) AS confirmed_legit,
                 COALESCE(SUM(CASE WHEN human_decision = 'Needs further investigation' THEN 1 ELSE 0 END), 0) AS needs_investigation
-            FROM transactions
+            FROM ach_payments
             """
         ).fetchone()
         return dict(row) if row else {}
@@ -148,7 +155,7 @@ def fetch_summary() -> dict[str, Any]:
 def fetch_recent(limit: int = 50) -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM transactions ORDER BY ts DESC LIMIT ?",
+            "SELECT * FROM ach_payments ORDER BY ts DESC LIMIT ?",
             (limit,),
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
@@ -158,7 +165,7 @@ def fetch_flagged(limit: int = 100) -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT * FROM transactions
+            SELECT * FROM ach_payments
              WHERE is_suspicious = 1
              ORDER BY fraud_score DESC, ts DESC
              LIMIT ?
@@ -169,11 +176,11 @@ def fetch_flagged(limit: int = 100) -> list[dict[str, Any]]:
 
 
 def fetch_pending_flagged(limit: int = 25) -> list[dict[str, Any]]:
-    """Flagged transactions without a human decision yet."""
+    """Flagged ACH payments without a human decision yet."""
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT * FROM transactions
+            SELECT * FROM ach_payments
              WHERE is_suspicious = 1 AND human_decision IS NULL
              ORDER BY fraud_score DESC, ts DESC
              LIMIT ?
@@ -186,6 +193,6 @@ def fetch_pending_flagged(limit: int = 25) -> list[dict[str, Any]]:
 def fetch_transaction(tx_id: str) -> dict[str, Any] | None:
     with connect() as conn:
         row = conn.execute(
-            "SELECT * FROM transactions WHERE id = ?", (tx_id,)
+            "SELECT * FROM ach_payments WHERE id = ?", (tx_id,)
         ).fetchone()
         return _row_to_dict(row) if row else None

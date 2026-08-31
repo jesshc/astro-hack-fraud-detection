@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Fraud Detection Dashboard</title>
+<title>ACH Fraud Detection Dashboard</title>
 <style>
   :root {
     --bg: #0f172a;
@@ -171,8 +171,8 @@
 <body>
 <header>
   <div>
-    <h1>Credit Card Fraud Detection</h1>
-    <div class="sub"><span class="live-dot"></span>Live - auto-refreshing every 5s - powered by Apache Airflow</div>
+    <h1>ACH Fraud Detection</h1>
+    <div class="sub"><span class="live-dot"></span>Live ACH payment monitoring - refreshes every 5s</div>
   </div>
   <div class="sub" id="last-update">-</div>
 </header>
@@ -182,11 +182,11 @@
 
   <section class="grid">
     <div class="panel">
-      <h2>Flagged transactions</h2>
+      <h2>Flagged ACH payments</h2>
       <div class="body">
         <table id="flagged-table">
           <thead><tr>
-            <th>Time</th><th>Amount</th><th>Merchant</th><th>Location</th><th>Risk</th><th>Decision</th>
+            <th>Time</th><th>Amount</th><th>Receiver</th><th>States</th><th>Risk</th><th>Decision</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -196,17 +196,17 @@
     <div class="panel" id="details">
       <h2>Transaction details</h2>
       <div class="body">
-        <div class="empty">Click a flagged transaction to view details.</div>
+        <div class="empty">Click a flagged payment to view details.</div>
       </div>
     </div>
   </section>
 
   <section class="panel" style="margin-top: 24px;">
-    <h2>Recent transactions (all)</h2>
+    <h2>Recent ACH payments</h2>
     <div class="body">
       <table id="recent-table">
         <thead><tr>
-          <th>Time</th><th>Amount</th><th>Merchant</th><th>Location</th><th>Channel</th><th>Risk</th><th>Decision</th>
+          <th>Time</th><th>Amount</th><th>Receiver</th><th>States</th><th>Channel</th><th>Risk</th><th>Decision</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -248,8 +248,8 @@ async function refreshKpis() {
   const r = await fetch(API + "/api/summary");
   const s = await r.json();
   const kpis = [
-    { label: "Total transactions", value: s.total_tx ?? 0 },
-    { label: "Suspicious", value: s.suspicious_tx ?? 0, cls: "warn" },
+    { label: "Total ACH payments", value: s.total_tx ?? 0 },
+    { label: "Payments under review", value: s.suspicious_tx ?? 0, cls: "warn" },
     { label: "Avg risk score", value: (s.avg_score ?? 0).toFixed(3) },
     { label: "Max risk score", value: (s.max_score ?? 0).toFixed(3), cls: "danger" },
     { label: "Confirmed fraud", value: s.confirmed_fraud ?? 0, cls: "danger" },
@@ -269,15 +269,15 @@ async function refreshFlagged() {
   const rows = await r.json();
   const tbody = document.querySelector("#flagged-table tbody");
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--muted); padding: 32px;">No flagged transactions yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--muted); padding: 32px;">No flagged ACH payments yet.</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map(t => `
     <tr data-id="${t.id}" class="${t.id === selectedId ? 'selected' : ''}">
       <td>${fmtTime(t.ts)}</td>
       <td>${fmtAmt(t.amount)}</td>
-      <td>${t.merchant}</td>
-      <td>${t.merchant_city}, ${t.merchant_state}</td>
+      <td>${t.receiver_name}</td>
+      <td>${t.originator_state} -> ${t.receiver_state}</td>
       <td><span class="risk ${riskClass(t.fraud_score)}">${Number(t.fraud_score).toFixed(2)}</span></td>
       <td>${decisionBadge(t.human_decision)}</td>
     </tr>`).join("");
@@ -291,16 +291,16 @@ async function refreshRecent() {
   const rows = await r.json();
   const tbody = document.querySelector("#recent-table tbody");
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--muted); padding: 32px;">No transactions yet - trigger fraud_stream to simulate.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--muted); padding: 32px;">No ACH payments yet - trigger fraud_stream to simulate.</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map(t => `
     <tr>
       <td>${fmtTime(t.ts)}</td>
       <td>${fmtAmt(t.amount)}</td>
-      <td>${t.merchant}</td>
-      <td>${t.merchant_city}, ${t.merchant_state}</td>
-      <td>${t.use_chip}</td>
+      <td>${t.receiver_name}</td>
+      <td>${t.originator_state} -> ${t.receiver_state}</td>
+      <td>${t.channel}</td>
       <td><span class="risk ${riskClass(t.fraud_score)}">${Number(t.fraud_score).toFixed(2)}</span></td>
       <td>${decisionBadge(t.human_decision)}</td>
     </tr>`).join("");
@@ -321,17 +321,18 @@ async function selectTx(id) {
     ? `<div style="margin-top:8px;">Current decision: ${decisionBadge(t.human_decision)}</div>`
     : "";
   document.querySelector("#details .body").innerHTML = `
-    <div class="detail-row"><span class="k">Transaction ID</span><span class="v" style="font-family:monospace; font-size:11px;">${t.id}</span></div>
+    <div class="detail-row"><span class="k">Payment ID</span><span class="v" style="font-family:monospace; font-size:11px;">${t.id}</span></div>
     <div class="detail-row"><span class="k">Timestamp</span><span class="v">${fmtTime(t.ts)}</span></div>
-    <div class="detail-row"><span class="k">User / Card</span><span class="v">${t.user_id} / ${t.card_id}</span></div>
+    <div class="detail-row"><span class="k">Originator / Receiver</span><span class="v">${t.originator_id} / ${t.receiver_id}</span></div>
     <div class="detail-row"><span class="k">Amount</span><span class="v">${fmtAmt(t.amount)}</span></div>
-    <div class="detail-row"><span class="k">Merchant</span><span class="v">${t.merchant}</span></div>
-    <div class="detail-row"><span class="k">Location</span><span class="v">${t.merchant_city}, ${t.merchant_state}</span></div>
-    <div class="detail-row"><span class="k">MCC</span><span class="v">${t.mcc}</span></div>
-    <div class="detail-row"><span class="k">Channel</span><span class="v">${t.use_chip}</span></div>
+    <div class="detail-row"><span class="k">Originator / Receiver names</span><span class="v">${t.originator_name} -> ${t.receiver_name}</span></div>
+    <div class="detail-row"><span class="k">States</span><span class="v">${t.originator_state} -> ${t.receiver_state}</span></div>
+    <div class="detail-row"><span class="k">Payment type / SEC code</span><span class="v">${t.payment_type} / ${t.sec_code}</span></div>
+    <div class="detail-row"><span class="k">Account age</span><span class="v">${t.account_age_days} days</span></div>
+    <div class="detail-row"><span class="k">Channel</span><span class="v">${t.channel}</span></div>
     <div class="detail-row"><span class="k">Fraud risk score</span><span class="v"><span class="risk ${riskClass(t.fraud_score)}">${Number(t.fraud_score).toFixed(3)}</span></span></div>
     <div class="reasons">
-      <h3>Why was this flagged?</h3>
+      <h3>Why was this payment flagged?</h3>
       ${reasons}
     </div>
     <div class="actions">
