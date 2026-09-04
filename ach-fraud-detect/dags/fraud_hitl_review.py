@@ -20,7 +20,9 @@ Requires Airflow 3.1+ (HITL operators live in the standard provider).
 
 from __future__ import annotations
 
-from pendulum import datetime, duration
+from datetime import timedelta
+
+from pendulum import datetime
 
 from airflow.providers.standard.operators.hitl import HITLOperator
 from airflow.sdk import Asset, dag, task
@@ -41,7 +43,7 @@ DECISION_OPTIONS = ["Legitimate", "Fraud", "Needs further investigation"]
     default_args={
         "owner": "fraud-demo",
         "retries": 2,
-        "retry_delay": duration(seconds=10),
+        "retry_delay": timedelta(seconds=10),
     },
     tags=["fraud", "hitl"],
     doc_md=__doc__,
@@ -57,8 +59,8 @@ def fraud_hitl_review():
         return pending
 
     @task
-    def split_pending(txs: list[dict]) -> list[dict]:
-        """Build one review payload per flagged transaction."""
+    def build_review_payloads(txs: list[dict]) -> list[dict]:
+        """Build one review payload per flagged transaction for human review."""
         rows = []
         for tx in txs:
             subject = (
@@ -89,18 +91,10 @@ def fraud_hitl_review():
         """Keep the transaction IDs in the same order as the HITL tasks."""
         return [row["tx_id"] for row in rows]
 
-    review_rows = split_pending(collect_pending())
-    tx_ids = extract_tx_ids(review_rows)
-
-    # Dynamically map one HITL task per pending flagged transaction.
-    review = HITLOperator.partial(
-        task_id="await_reviewer_decision",
-        options=DECISION_OPTIONS,
-        defaults=["Needs further investigation"],
-        multiple=False,
-        # 24-hour SLA: if no one responds, mark as "Needs further investigation".
-        execution_timeout=duration(hours=24),
-    ).expand_kwargs(review_rows)
+    @task
+    def to_hitl_payloads(rows: list[dict]) -> list[dict]:
+        """Strip review rows down to the fields HITLOperator accepts."""
+        return [{"subject": row["subject"], "body": row["body"]} for row in rows]
 
     @task(trigger_rule="all_done")
     def record_decision(review_output: dict, tx_id: str) -> str:
@@ -112,6 +106,19 @@ def fraud_hitl_review():
         update_decision(tx_id, decision, notes="Recorded via Airflow HITL")
         print(f"Recorded decision '{decision}' for {tx_id}.")
         return decision
+
+    review_rows = build_review_payloads(collect_pending())
+    tx_ids = extract_tx_ids(review_rows)
+    hitl_payloads = to_hitl_payloads(review_rows)
+
+    review = HITLOperator.partial(
+        task_id="await_reviewer_decision",
+        options=DECISION_OPTIONS,
+        defaults=["Needs further investigation"],
+        multiple=False,
+        # 24-hour SLA: if no one responds, mark as "Needs further investigation".
+        response_timeout=timedelta(hours=24),
+    ).expand_kwargs(hitl_payloads)
 
     record_decision.expand(
         review_output=review.output,

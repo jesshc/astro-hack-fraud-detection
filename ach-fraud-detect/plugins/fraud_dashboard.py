@@ -15,6 +15,7 @@ the Airflow navbar.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from airflow.plugins_manager import AirflowPlugin
@@ -87,6 +88,7 @@ def api_decision(tx_id: str, body: DecisionIn) -> JSONResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not ok:
         raise HTTPException(status_code=404, detail="Transaction not found")
+
     return JSONResponse({"ok": True, "id": tx_id, "decision": body.decision})
 
 

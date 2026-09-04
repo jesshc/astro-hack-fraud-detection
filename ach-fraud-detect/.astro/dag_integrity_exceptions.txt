@@ -1,1 +1,1 @@
-# Add dag files to exempt from parse test below. ex: dags/<test-file>
+# Auto-generated Astro exceptions file.

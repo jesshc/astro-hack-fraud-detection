@@ -18,10 +18,16 @@ import pandas as pd
 
 
 STATES = ["CA", "CO", "FL", "GA", "IL", "MA", "NC", "NY", "OH", "TX", "VA", "WA"]
+ORIGINATOR_NAMES = ["Northstar Services", "Pine Valley Foods", "Harbor Manufacturing", "Summit Health"]
+RECEIVER_NAMES = ["Avery Johnson", "Brightline Supply", "Cedar Utilities", "Maple Consulting"]
 PAYMENT_TYPES = ["Payroll", "Vendor payment", "Bill payment", "Direct deposit", "Tax payment"]
 # Standard Entry Class codes identify the type and authorization method of an ACH transaction.
 SEC_CODES = ["PPD", "CCD", "WEB", "TEL", "IAT"]
 CHANNELS = ["Online banking", "API", "File upload", "Branch initiated"]
+LEGIT_SEC_CODES = ["PPD", "CCD", "WEB"]
+TRAINING_FRAUD_RATE = 0.04
+LEGIT_CHANNEL_WEIGHTS = [0.45, 0.25, 0.2, 0.1]
+FRAUD_CHANNEL_WEIGHTS = [0.2, 0.4, 0.3, 0.1]
 
 
 @dataclass
@@ -54,8 +60,8 @@ def _pick_parties(rng: random.Random, fraud: bool) -> tuple[str, str, str, str, 
     
     # Choose a five-digit number and add the receiver ID prefix.
     receiver_id = f"RCVR-{rng.randint(10000, 99999)}"
-    originator_name = rng.choice(["Northstar Services", "Pine Valley Foods", "Harbor Manufacturing", "Summit Health"])
-    receiver_name = rng.choice(["Avery Johnson", "Brightline Supply", "Cedar Utilities", "Maple Consulting"])
+    originator_name = rng.choice(ORIGINATOR_NAMES)
+    receiver_name = rng.choice(RECEIVER_NAMES)
     return originator_id, receiver_id, originator_name, receiver_name, originator_state, receiver_state
 
 
@@ -67,21 +73,16 @@ def _sample_amount(rng: random.Random, fraud: bool) -> float:
     return round(max(10.0, rng.lognormvariate(6.0, 0.75)), 2)
 
 
-def _sample_transaction(
-    rng: random.Random,
-    ts: datetime,
-    force_fraud: bool | None = None,
-) -> TransactionRow:
+def _build_transaction(rng: random.Random, ts: datetime, is_fraud: bool) -> TransactionRow:
     """Assemble one transaction, biasing attributes when it is fraudulent."""
-    is_fraud = force_fraud if force_fraud is not None else (rng.random() < 0.04)
     originator_id, receiver_id, originator_name, receiver_name, originator_state, receiver_state = _pick_parties(rng, fraud=is_fraud)
     amount = _sample_amount(rng, fraud=is_fraud)
     account_age_days = rng.randint(2, 3650) if not is_fraud else rng.randint(1, 180)
     payment_type = rng.choice(PAYMENT_TYPES)
-    sec_code = rng.choice(SEC_CODES if is_fraud else ["PPD", "CCD", "WEB"])
+    sec_code = rng.choice(SEC_CODES if is_fraud else LEGIT_SEC_CODES)
     channel = rng.choices(
         CHANNELS,
-        weights=[0.45, 0.25, 0.2, 0.1] if not is_fraud else [0.2, 0.4, 0.3, 0.1],
+        weights=LEGIT_CHANNEL_WEIGHTS if not is_fraud else FRAUD_CHANNEL_WEIGHTS,
         k=1,
     )[0]
     return TransactionRow(
@@ -102,6 +103,18 @@ def _sample_transaction(
     )
 
 
+def _sample_training_transaction(rng: random.Random, ts: datetime) -> TransactionRow:
+    """Create a labeled training example using the training-data fraud rate."""
+    is_fraud = rng.random() < TRAINING_FRAUD_RATE
+    return _build_transaction(rng, ts, is_fraud=is_fraud)
+
+
+def _sample_live_transaction(rng: random.Random, ts: datetime, fraud_rate: float) -> TransactionRow:
+    """Create a live payment using the caller-specified fraud rate."""
+    is_fraud = rng.random() < fraud_rate
+    return _build_transaction(rng, ts, is_fraud=is_fraud)
+
+
 def seed_training_dataset(n_rows: int = 5000, seed: int = 42) -> pd.DataFrame:
     """Create reproducible labeled records for training the fraud model."""
     rng = random.Random(seed)
@@ -111,7 +124,7 @@ def seed_training_dataset(n_rows: int = 5000, seed: int = 42) -> pd.DataFrame:
         # spread over the previous 60 days
         offset = timedelta(minutes=rng.randint(0, 60 * 24 * 60))
         ts = now - offset
-        rows.append(_sample_transaction(rng, ts))
+        rows.append(_sample_training_transaction(rng, ts))
     df = pd.DataFrame([r.__dict__ for r in rows])
     return df
 
@@ -132,7 +145,6 @@ def generate_batch(batch_size: int = 15, fraud_rate: float = 0.15) -> list[dict]
     for _i in range(batch_size):
         # Slight jitter keeps payment timestamps unique.
         ts = now - timedelta(seconds=rng.randint(0, 90))
-        force = True if rng.random() < fraud_rate else None
-        rows.append(_sample_transaction(rng, ts, force_fraud=force))
+        rows.append(_sample_live_transaction(rng, ts, fraud_rate=fraud_rate))
     # Return without the ground-truth label: live payments are unlabeled.
     return [{k: v for k, v in r.__dict__.items() if k != "is_fraud"} for r in rows]

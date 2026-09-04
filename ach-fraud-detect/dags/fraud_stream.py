@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pendulum import datetime, duration
 
+from airflow.providers.standard.sensors.external_task import ExternalTaskSensor
 from airflow.sdk import Asset, dag, task
 
 
@@ -41,6 +42,14 @@ RISK_THRESHOLD = 0.55
     doc_md=__doc__,
 )
 def fraud_stream():
+    wait_for_bootstrap = ExternalTaskSensor(
+        task_id="wait_for_bootstrap",
+        external_dag_id="fraud_bootstrap",
+        external_task_id="train_model",
+        execution_date_fn=lambda _: datetime(2026, 1, 1),
+        deferrable=True,
+    )
+
     @task
     def simulate_batch() -> list[dict]:
         """Create a new batch of simulated ACH payments for this run."""
@@ -100,7 +109,9 @@ def fraud_stream():
             print("No new flags this batch.")
         return summary
 
-    announce_if_flagged(flag_and_persist(score_batch(simulate_batch())))
+    wait_for_bootstrap >> announce_if_flagged(
+        flag_and_persist(score_batch(simulate_batch()))
+    )
 
 
 fraud_stream()

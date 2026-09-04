@@ -80,6 +80,31 @@
     border-bottom: 1px solid var(--border);
     background: var(--panel-2);
   }
+  .panel textarea {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font: inherit;
+  }
+  th.sortable {
+    cursor: pointer;
+    user-select: none;
+  }
+  th.sortable:hover {
+    background: rgba(56, 189, 248, 0.1);
+  }
+  .sort-icon {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 10px;
+    color: var(--muted);
+    vertical-align: middle;
+  }
+  th.sortable.active .sort-icon {
+    color: var(--accent);
+  }
   .panel .body { overflow-y: auto; max-height: 520px; }
 
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -125,6 +150,19 @@
 
   .actions { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
   .actions h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+  .notes-box { margin-top: 14px; }
+  .notes-box label {
+    display: block;
+    font-size: 12px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .notes-box textarea {
+    width: 100%;
+    min-height: 90px;
+    resize: vertical;
+  }
   .btn {
     display: inline-block;
     padding: 8px 14px;
@@ -186,7 +224,12 @@
       <div class="body">
         <table id="flagged-table">
           <thead><tr>
-            <th>Time</th><th>Amount</th><th>Receiver</th><th>States</th><th>Risk</th><th>Decision</th>
+            <th class="sortable" data-sort="time_desc">Time<span class="sort-icon">▼</span></th>
+            <th class="sortable" data-sort="amount_desc">Amount<span class="sort-icon">◆</span></th>
+            <th>Receiver</th>
+            <th>States</th>
+            <th class="sortable" data-sort="risk_desc">Risk<span class="sort-icon">◆</span></th>
+            <th>Decision</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -218,14 +261,17 @@
 
 <script>
 const API = "/fraud-dashboard";
+const RISK_THRESHOLD = 0.55;
 let selectedId = null;
-
+let flaggedRows = [];
+let flaggedSort = "time_desc";
 function riskClass(score) {
   if (score >= 0.75) return "high";
   if (score >= 0.5) return "med";
   return "low";
 }
-function decisionBadge(d) {
+function decisionBadge(d, score) {
+  if (!d && Number(score) < RISK_THRESHOLD) return '<span class="decision-badge legit">Not flagged</span>';
   if (!d) return '<span class="decision-badge pending">Pending review</span>';
   if (d === "Legitimate") return '<span class="decision-badge legit">Legitimate</span>';
   if (d === "Fraud") return '<span class="decision-badge fraud">Fraud</span>';
@@ -251,6 +297,7 @@ async function refreshKpis() {
     { label: "Total ACH payments", value: s.total_tx ?? 0 },
     { label: "Payments under review", value: s.suspicious_tx ?? 0, cls: "warn" },
     { label: "Avg risk score", value: (s.avg_score ?? 0).toFixed(3) },
+    { label: "Avg flagged risk score", value: (s.avg_flagged_score ?? 0).toFixed(3), cls: "danger" },
     { label: "Max risk score", value: (s.max_score ?? 0).toFixed(3), cls: "danger" },
     { label: "Confirmed fraud", value: s.confirmed_fraud ?? 0, cls: "danger" },
     { label: "Confirmed legit", value: s.confirmed_legit ?? 0, cls: "ok" },
@@ -264,10 +311,31 @@ async function refreshKpis() {
   document.getElementById("kpis").innerHTML = html;
 }
 
+function sortFlaggedRows(rows) {
+  const copy = [...rows];
+  switch (flaggedSort) {
+    case "risk_asc":
+      copy.sort((a, b) => Number(a.fraud_score) - Number(b.fraud_score));
+      break;
+    case "time_desc":
+      copy.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+      break;
+    case "amount_desc":
+      copy.sort((a, b) => Number(b.amount) - Number(a.amount));
+      break;
+    case "risk_desc":
+    default:
+      copy.sort((a, b) => Number(b.fraud_score) - Number(a.fraud_score));
+      break;
+  }
+  return copy;
+}
+
 async function refreshFlagged() {
   const r = await fetch(API + "/api/flagged?limit=50");
-  const rows = await r.json();
+  flaggedRows = await r.json();
   const tbody = document.querySelector("#flagged-table tbody");
+  const rows = sortFlaggedRows(flaggedRows);
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--muted); padding: 32px;">No flagged ACH payments yet.</td></tr>';
     return;
@@ -302,7 +370,7 @@ async function refreshRecent() {
       <td>${t.originator_state} -> ${t.receiver_state}</td>
       <td>${t.channel}</td>
       <td><span class="risk ${riskClass(t.fraud_score)}">${Number(t.fraud_score).toFixed(2)}</span></td>
-      <td>${decisionBadge(t.human_decision)}</td>
+      <td>${decisionBadge(t.human_decision, t.fraud_score)}</td>
     </tr>`).join("");
 }
 
@@ -317,6 +385,7 @@ async function selectTx(id) {
   const reasons = (t.reasons && t.reasons.length)
     ? `<ul>${t.reasons.map(x => `<li>${x}</li>`).join("")}</ul>`
     : '<div class="none">No specific reasons stored.</div>';
+  const existingNotes = (t.human_notes || "").replace(/'/g, "&apos;");
   const decisionHtml = t.human_decision
     ? `<div style="margin-top:8px;">Current decision: ${decisionBadge(t.human_decision)}</div>`
     : "";
@@ -341,15 +410,21 @@ async function selectTx(id) {
       <button class="btn fraud" onclick="submitDecision('${t.id}', 'Fraud')">Mark Fraud</button>
       <button class="btn invest" onclick="submitDecision('${t.id}', 'Needs further investigation')">Needs Investigation</button>
       ${decisionHtml}
+      <div class="notes-box">
+        <label for="review-notes">Review notes</label>
+        <textarea id="review-notes" placeholder="Add any comments or context for this review...">${existingNotes}</textarea>
+      </div>
     </div>
   `;
 }
 
 async function submitDecision(id, decision) {
+  const notesEl = document.getElementById("review-notes");
+  const notes = notesEl ? notesEl.value.trim() : "";
   const r = await fetch(API + "/api/decision/" + encodeURIComponent(id), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ decision }),
+    body: JSON.stringify({ decision, notes }),
   });
   if (r.ok) {
     showToast(`Recorded decision: ${decision}`);
@@ -368,6 +443,40 @@ async function refreshAll() {
     console.error(e);
   }
 }
+
+document.querySelectorAll("#flagged-table th.sortable").forEach(th => {
+  th.addEventListener("click", () => {
+    const dataSort = th.dataset.sort; // e.g., "time_desc"
+    const columnName = dataSort.replace(/_asc$|_desc$/, ""); // e.g., "time"
+    const currentBase = flaggedSort.replace(/_asc$|_desc$/, "");
+    
+    if (columnName === currentBase) {
+      // Same column - toggle direction
+      flaggedSort = flaggedSort.endsWith("_asc") ? columnName + "_desc" : columnName + "_asc";
+    } else {
+      // New column - start with default (usually desc)
+      flaggedSort = dataSort;
+    }
+    updateSortIcons();
+    refreshFlagged();
+  });
+});
+
+function updateSortIcons() {
+  document.querySelectorAll("#flagged-table th.sortable").forEach(th => {
+    const columnName = th.dataset.sort.replace(/_asc$|_desc$/, "");
+    const currentBase = flaggedSort.replace(/_asc$|_desc$/, "");
+    const isActive = columnName === currentBase;
+    th.classList.toggle("active", isActive);
+    const icon = th.querySelector(".sort-icon");
+    if (isActive) {
+      icon.textContent = flaggedSort.endsWith("_asc") ? "▲" : "▼";
+    } else {
+      icon.textContent = "◆";
+    }
+  });
+}
+updateSortIcons();
 
 refreshAll();
 setInterval(refreshAll, 5000);
