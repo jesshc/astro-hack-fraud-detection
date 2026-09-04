@@ -41,7 +41,6 @@ CREATE INDEX IF NOT EXISTS ix_ach_ts ON ach_payments(ts DESC);
 CREATE INDEX IF NOT EXISTS ix_ach_flag ON ach_payments(is_suspicious, human_decision);
 """
 
-
 @contextmanager
 def connect():
     ensure_dirs()
@@ -142,6 +141,7 @@ def fetch_summary() -> dict[str, Any]:
                 COUNT(*) AS total_tx,
                 COALESCE(SUM(is_suspicious), 0) AS suspicious_tx,
                 COALESCE(AVG(fraud_score), 0.0) AS avg_score,
+                COALESCE(AVG(CASE WHEN is_suspicious = 1 THEN fraud_score END), 0.0) AS avg_flagged_score,
                 COALESCE(MAX(fraud_score), 0.0) AS max_score,
                 COALESCE(SUM(CASE WHEN human_decision = 'Fraud' THEN 1 ELSE 0 END), 0) AS confirmed_fraud,
                 COALESCE(SUM(CASE WHEN human_decision = 'Legitimate' THEN 1 ELSE 0 END), 0) AS confirmed_legit,

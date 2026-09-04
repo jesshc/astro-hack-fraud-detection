@@ -1,2 +1,6 @@
 project:
-  name: learning-airflow
+  name: ach-fraud-detect
+  id: ach-fraud-detect
+  type: dag
+  docker:
+    - Dockerfile
