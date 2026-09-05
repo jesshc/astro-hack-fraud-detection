@@ -200,12 +200,14 @@ def fetch_summary() -> dict[str, Any]:
         return dict(row) if row else {}
 
 
-def fetch_recent(limit: int = 50) -> list[dict[str, Any]]:
+def fetch_recent(limit: int | None = 50) -> list[dict[str, Any]]:
     with connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM ach_payments ORDER BY ts DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        query = "SELECT * FROM ach_payments ORDER BY ts DESC, created_at DESC, id DESC"
+        if limit is not None:
+            query += " LIMIT ?"
+            rows = conn.execute(query, (limit,)).fetchall()
+        else:
+            rows = conn.execute(query).fetchall()
         return [_row_to_dict(r) for r in rows]
 
 

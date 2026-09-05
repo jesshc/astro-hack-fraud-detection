@@ -131,6 +131,7 @@
     font-weight: 600;
   }
   .decision-badge.legit { background: rgba(34, 197, 94, 0.15); color: var(--ok); }
+  .decision-badge.not-flagged { background: rgba(56, 189, 248, 0.15); color: var(--accent); }
   .decision-badge.fraud { background: rgba(239, 68, 68, 0.15); color: var(--danger); }
   .decision-badge.invest { background: rgba(245, 158, 11, 0.15); color: var(--warn); }
   .decision-badge.pending { background: rgba(148, 163, 184, 0.15); color: var(--muted); }
@@ -149,6 +150,35 @@
   .reasons .none { color: var(--muted); font-style: italic; }
 
   .actions { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+  .review-form {
+    margin-top: 20px;
+    padding: 16px;
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    border-radius: 8px;
+    background: rgba(56, 189, 248, 0.06);
+  }
+  .review-form h3 { margin: 0 0 12px; }
+  .decision-options { display: grid; gap: 8px; }
+  .decision-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel-2);
+    cursor: pointer;
+  }
+  .decision-option:has(input:checked) {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  .decision-option input { accent-color: var(--accent); }
+  .decision-option.legit { color: var(--ok); }
+  .decision-option.fraud { color: var(--danger); }
+  .decision-option.invest { color: var(--warn); }
+  .submit-review { margin-top: 14px; width: 100%; }
+  .submit-review:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
   .actions h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
   .notes-box { margin-top: 14px; }
   .notes-box label {
@@ -245,7 +275,7 @@
   </section>
 
   <section class="panel" style="margin-top: 24px;">
-    <h2>Recent ACH payments</h2>
+    <h2>All ACH payments</h2>
     <div class="body">
       <table id="recent-table">
         <thead><tr>
@@ -253,7 +283,7 @@
           <th class="sortable" data-sort="amount_desc">Amount<span class="sort-icon">◆</span></th>
           <th>Receiver</th><th>States</th><th>Channel</th>
           <th class="sortable" data-sort="risk_desc">Risk<span class="sort-icon">◆</span></th>
-          <th>Decision</th>
+          <th class="sortable" data-sort="decision_asc">Decision<span class="sort-icon">◆</span></th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -276,7 +306,7 @@ function riskClass(score) {
   return "low";
 }
 function decisionBadge(d, score) {
-  if (!d && Number(score) < RISK_THRESHOLD) return '<span class="decision-badge legit">Not flagged</span>';
+  if (!d && Number(score) < RISK_THRESHOLD) return '<span class="decision-badge not-flagged">Not flagged</span>';
   if (!d) return '<span class="decision-badge pending">Pending review</span>';
   if (d === "Legitimate") return '<span class="decision-badge legit">Legitimate</span>';
   if (d === "Fraud") return '<span class="decision-badge fraud">Fraud</span>';
@@ -334,12 +364,22 @@ function sortRows(rows, sort) {
     case "amount_desc":
       copy.sort((a, b) => Number(b.amount) - Number(a.amount));
       break;
+    case "decision_asc":
+      copy.sort((a, b) => decisionSortValue(a).localeCompare(decisionSortValue(b)));
+      break;
+    case "decision_desc":
+      copy.sort((a, b) => decisionSortValue(b).localeCompare(decisionSortValue(a)));
+      break;
     case "risk_desc":
     default:
       copy.sort((a, b) => Number(b.fraud_score) - Number(a.fraud_score));
       break;
   }
   return copy;
+}
+function decisionSortValue(transaction) {
+  if (transaction.human_decision) return transaction.human_decision;
+  return Number(transaction.fraud_score) < RISK_THRESHOLD ? "Not flagged" : "Pending review";
 }
 
 async function refreshFlagged() {
@@ -366,11 +406,11 @@ async function refreshFlagged() {
 }
 
 async function refreshRecent() {
-  const r = await fetch(API + "/api/transactions?limit=50");
+  const r = await fetch(API + "/api/transactions");
   const rows = sortRecentRows(await r.json());
   const tbody = document.querySelector("#recent-table tbody");
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--muted); padding: 32px;">No ACH payments yet - trigger fraud_stream to simulate.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--muted); padding: 32px;">No ACH payments available yet.</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map(t => `
@@ -398,21 +438,38 @@ async function selectTx(id, readOnly = false) {
   const t = await r.json();
   const reasons = (t.reasons && t.reasons.length)
     ? `<ul>${t.reasons.map(x => `<li>${x}</li>`).join("")}</ul>`
-    : '<div class="none">No specific reasons stored.</div>';
+    : `<div class="none">This transaction was not flagged because its risk score is below ${RISK_THRESHOLD.toFixed(2)}.</div>`;
+  const reasonsHeading = t.is_suspicious
+    ? "Why was this payment flagged?"
+    : "Risk assessment";
   const existingNotes = (t.human_notes || "").replace(/'/g, "&apos;");
   const decisionHtml = t.human_decision
-    ? `<div style="margin-top:8px;">Current decision: ${decisionBadge(t.human_decision)}</div>`
+    ? `<div style="margin-top:8px;">Decision: ${decisionBadge(t.human_decision)}</div>`
+    : `<div style="margin-top:8px;">Decision: ${decisionBadge(null, t.fraud_score)}</div>`;
+  const notesHtml = t.human_decision && t.human_notes
+    ? `<div class="detail-row"><span class="k">Review notes</span><span class="v">${t.human_notes}</span></div>`
     : "";
   const reviewActions = readOnly ? "" : `
-      <h3>Human decision</h3>
-      <button class="btn legit" onclick="submitDecision('${t.id}', 'Legitimate')">Mark Legitimate</button>
-      <button class="btn fraud" onclick="submitDecision('${t.id}', 'Fraud')">Mark Fraud</button>
-      <button class="btn invest" onclick="submitDecision('${t.id}', 'Needs further investigation')">Needs Investigation</button>
-      ${decisionHtml}
+      <h3>Human review</h3>
+      <div class="decision-options" role="radiogroup" aria-label="Human decision">
+        <label class="decision-option legit">
+          <input type="radio" name="review-decision" value="Legitimate" onchange="updateSubmitState()">
+          <span>Legitimate</span>
+        </label>
+        <label class="decision-option fraud">
+          <input type="radio" name="review-decision" value="Fraud" onchange="updateSubmitState()">
+          <span>Fraud</span>
+        </label>
+        <label class="decision-option invest">
+          <input type="radio" name="review-decision" value="Needs further investigation" onchange="updateSubmitState()">
+          <span>Needs Further Investigation</span>
+        </label>
+      </div>
       <div class="notes-box">
         <label for="review-notes">Review notes</label>
         <textarea id="review-notes" placeholder="Add any comments or context for this review...">${existingNotes}</textarea>
-      </div>`;
+      </div>
+      <button id="submit-review" class="btn submit-review" disabled onclick="submitDecision('${t.id}')">Submit Review</button>`;
   document.querySelector("#details .body").innerHTML = `
     <div class="detail-row"><span class="k">Payment ID</span><span class="v" style="font-family:monospace; font-size:11px;">${t.id}</span></div>
     <div class="detail-row"><span class="k">Timestamp</span><span class="v">${fmtTime(t.ts)}</span></div>
@@ -424,17 +481,33 @@ async function selectTx(id, readOnly = false) {
     <div class="detail-row"><span class="k">Account age</span><span class="v">${t.account_age_days} days</span></div>
     <div class="detail-row"><span class="k">Channel</span><span class="v">${t.channel}</span></div>
     <div class="detail-row"><span class="k">Fraud risk score</span><span class="v"><span class="risk ${riskClass(t.fraud_score)}">${Number(t.fraud_score).toFixed(3)}</span></span></div>
+    ${decisionHtml}
+    ${notesHtml}
     <div class="reasons">
-      <h3>Why was this payment flagged?</h3>
+      <h3>${reasonsHeading}</h3>
       ${reasons}
     </div>
-    ${reviewActions ? `<div class="actions">${reviewActions}</div>` : '<div class="none">View only. Human decisions can be made from the flagged payments list.</div>'}
+    ${reviewActions ? `<div class="actions review-form">${reviewActions}</div>` : ""}
   `;
 }
 
-async function submitDecision(id, decision) {
+function updateSubmitState() {
+  const submitButton = document.getElementById("submit-review");
+  const selected = document.querySelector('input[name="review-decision"]:checked');
+  if (submitButton) submitButton.disabled = !selected;
+}
+
+async function submitDecision(id) {
+  const selected = document.querySelector('input[name="review-decision"]:checked');
+  if (!selected) return;
+  const decision = selected.value;
   const notesEl = document.getElementById("review-notes");
   const notes = notesEl ? notesEl.value.trim() : "";
+  const submitButton = document.getElementById("submit-review");
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "Submitting review...";
+  }
   const r = await fetch(API + "/api/decision/" + encodeURIComponent(id), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -442,9 +515,18 @@ async function submitDecision(id, decision) {
   });
   if (r.ok) {
     showToast(`Recorded decision: ${decision}`);
-    await Promise.all([refreshKpis(), refreshFlagged(), refreshRecent(), selectTx(id)]);
+    await Promise.all([refreshKpis(), refreshFlagged(), refreshRecent(), selectTx(id, true)]);
   } else {
-    showToast("Failed to record decision", true);
+    let detail = "Failed to record decision";
+    try {
+      const error = await r.json();
+      if (error.detail) detail += `: ${error.detail}`;
+    } catch (_) {}
+    showToast(detail, true);
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = "Submit Review";
+    }
   }
 }
 

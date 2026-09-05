@@ -64,7 +64,7 @@ def api_summary() -> JSONResponse:
 
 
 @app.get("/api/transactions")
-def api_transactions(limit: int = 50) -> JSONResponse:
+def api_transactions(limit: int | None = None) -> JSONResponse:
     return JSONResponse(fetch_recent(limit=limit))
 
 
