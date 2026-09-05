@@ -249,7 +249,11 @@
     <div class="body">
       <table id="recent-table">
         <thead><tr>
-          <th>Time</th><th>Amount</th><th>Receiver</th><th>States</th><th>Channel</th><th>Risk</th><th>Decision</th>
+          <th class="sortable" data-sort="time_desc">Time<span class="sort-icon">▼</span></th>
+          <th class="sortable" data-sort="amount_desc">Amount<span class="sort-icon">◆</span></th>
+          <th>Receiver</th><th>States</th><th>Channel</th>
+          <th class="sortable" data-sort="risk_desc">Risk<span class="sort-icon">◆</span></th>
+          <th>Decision</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -265,6 +269,7 @@ const RISK_THRESHOLD = 0.55;
 let selectedId = null;
 let flaggedRows = [];
 let flaggedSort = "time_desc";
+let recentSort = "time_desc";
 function riskClass(score) {
   if (score >= 0.75) return "high";
   if (score >= 0.5) return "med";
@@ -312,8 +317,14 @@ async function refreshKpis() {
 }
 
 function sortFlaggedRows(rows) {
+  return sortRows(rows, flaggedSort);
+}
+function sortRecentRows(rows) {
+  return sortRows(rows, recentSort);
+}
+function sortRows(rows, sort) {
   const copy = [...rows];
-  switch (flaggedSort) {
+  switch (sort) {
     case "risk_asc":
       copy.sort((a, b) => Number(a.fraud_score) - Number(b.fraud_score));
       break;
@@ -356,14 +367,14 @@ async function refreshFlagged() {
 
 async function refreshRecent() {
   const r = await fetch(API + "/api/transactions?limit=50");
-  const rows = await r.json();
+  const rows = sortRecentRows(await r.json());
   const tbody = document.querySelector("#recent-table tbody");
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--muted); padding: 32px;">No ACH payments yet - trigger fraud_stream to simulate.</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map(t => `
-    <tr>
+    <tr data-id="${t.id}">
       <td>${fmtTime(t.ts)}</td>
       <td>${fmtAmt(t.amount)}</td>
       <td>${t.receiver_name}</td>
@@ -372,9 +383,12 @@ async function refreshRecent() {
       <td><span class="risk ${riskClass(t.fraud_score)}">${Number(t.fraud_score).toFixed(2)}</span></td>
       <td>${decisionBadge(t.human_decision, t.fraud_score)}</td>
     </tr>`).join("");
+  tbody.querySelectorAll("tr").forEach(tr => {
+    tr.addEventListener("click", () => selectTx(tr.dataset.id, true));
+  });
 }
 
-async function selectTx(id) {
+async function selectTx(id, readOnly = false) {
   selectedId = id;
   document.querySelectorAll("#flagged-table tbody tr").forEach(tr => {
     tr.classList.toggle("selected", tr.dataset.id === id);
@@ -389,6 +403,16 @@ async function selectTx(id) {
   const decisionHtml = t.human_decision
     ? `<div style="margin-top:8px;">Current decision: ${decisionBadge(t.human_decision)}</div>`
     : "";
+  const reviewActions = readOnly ? "" : `
+      <h3>Human decision</h3>
+      <button class="btn legit" onclick="submitDecision('${t.id}', 'Legitimate')">Mark Legitimate</button>
+      <button class="btn fraud" onclick="submitDecision('${t.id}', 'Fraud')">Mark Fraud</button>
+      <button class="btn invest" onclick="submitDecision('${t.id}', 'Needs further investigation')">Needs Investigation</button>
+      ${decisionHtml}
+      <div class="notes-box">
+        <label for="review-notes">Review notes</label>
+        <textarea id="review-notes" placeholder="Add any comments or context for this review...">${existingNotes}</textarea>
+      </div>`;
   document.querySelector("#details .body").innerHTML = `
     <div class="detail-row"><span class="k">Payment ID</span><span class="v" style="font-family:monospace; font-size:11px;">${t.id}</span></div>
     <div class="detail-row"><span class="k">Timestamp</span><span class="v">${fmtTime(t.ts)}</span></div>
@@ -404,17 +428,7 @@ async function selectTx(id) {
       <h3>Why was this payment flagged?</h3>
       ${reasons}
     </div>
-    <div class="actions">
-      <h3>Human decision</h3>
-      <button class="btn legit" onclick="submitDecision('${t.id}', 'Legitimate')">Mark Legitimate</button>
-      <button class="btn fraud" onclick="submitDecision('${t.id}', 'Fraud')">Mark Fraud</button>
-      <button class="btn invest" onclick="submitDecision('${t.id}', 'Needs further investigation')">Needs Investigation</button>
-      ${decisionHtml}
-      <div class="notes-box">
-        <label for="review-notes">Review notes</label>
-        <textarea id="review-notes" placeholder="Add any comments or context for this review...">${existingNotes}</textarea>
-      </div>
-    </div>
+    ${reviewActions ? `<div class="actions">${reviewActions}</div>` : '<div class="none">View only. Human decisions can be made from the flagged payments list.</div>'}
   `;
 }
 
@@ -462,6 +476,29 @@ document.querySelectorAll("#flagged-table th.sortable").forEach(th => {
   });
 });
 
+document.querySelectorAll("#recent-table th.sortable").forEach(th => {
+  th.addEventListener("click", () => {
+    const columnName = th.dataset.sort.replace(/_asc$|_desc$/, "");
+    const currentBase = recentSort.replace(/_asc$|_desc$/, "");
+    recentSort = columnName === currentBase
+      ? (recentSort.endsWith("_asc") ? columnName + "_desc" : columnName + "_asc")
+      : th.dataset.sort;
+    updateRecentSortIcons();
+    refreshRecent();
+  });
+});
+
+function updateRecentSortIcons() {
+  document.querySelectorAll("#recent-table th.sortable").forEach(th => {
+    const columnName = th.dataset.sort.replace(/_asc$|_desc$/, "");
+    const isActive = columnName === recentSort.replace(/_asc$|_desc$/, "");
+    th.classList.toggle("active", isActive);
+    th.querySelector(".sort-icon").textContent = isActive
+      ? (recentSort.endsWith("_asc") ? "▲" : "▼")
+      : "◆";
+  });
+}
+
 function updateSortIcons() {
   document.querySelectorAll("#flagged-table th.sortable").forEach(th => {
     const columnName = th.dataset.sort.replace(/_asc$|_desc$/, "");
@@ -477,6 +514,7 @@ function updateSortIcons() {
   });
 }
 updateSortIcons();
+updateRecentSortIcons();
 
 refreshAll();
 setInterval(refreshAll, 5000);

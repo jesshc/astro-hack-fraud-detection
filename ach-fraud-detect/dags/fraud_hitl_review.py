@@ -25,12 +25,26 @@ from datetime import timedelta
 from pendulum import datetime
 
 from airflow.providers.standard.operators.hitl import HITLOperator
-from airflow.sdk import Asset, dag, task
+from airflow.sdk import Asset, dag, get_current_context, task
 
 
 FLAGGED_ASSET = Asset("flagged_transactions")
 
 DECISION_OPTIONS = ["Legitimate", "Fraud", "Needs further investigation"]
+
+
+def persist_hitl_decision(review_output: dict, tx_id: str) -> str:
+    """Persist the decision produced by Airflow's native HITL task."""
+    from include.fraud_utils import update_decision
+
+    review_output = review_output or {}
+    chosen = review_output.get("chosen_options") or []
+    decision = chosen[0] if chosen else "Needs further investigation"
+    params_input = review_output.get("params_input") or {}
+    notes = params_input.get("notes") or "Recorded via Airflow HITL"
+    update_decision(tx_id, decision, notes=notes)
+    print(f"Recorded decision '{decision}' for {tx_id}.")
+    return decision
 
 
 @dag(
@@ -96,20 +110,28 @@ def fraud_hitl_review():
         """Strip review rows down to the fields HITLOperator accepts."""
         return [{"subject": row["subject"], "body": row["body"]} for row in rows]
 
+    @task
+    def register_hitl_references(tx_ids: list[str]) -> None:
+        """Persist each transaction's dynamically mapped HITL task identity."""
+        from include.fraud_utils import register_hitl_tasks
+
+        context = get_current_context()
+        register_hitl_tasks(
+            tx_ids,
+            dag_id=context["dag"].dag_id,
+            run_id=context["run_id"],
+            task_id="await_reviewer_decision",
+        )
+
     @task(trigger_rule="all_done")
     def record_decision(review_output: dict, tx_id: str) -> str:
         """Write the human's chosen decision back to SQLite."""
-        from include.fraud_utils import update_decision
-
-        chosen = (review_output or {}).get("chosen_options") or []
-        decision = chosen[0] if chosen else "Needs further investigation"
-        update_decision(tx_id, decision, notes="Recorded via Airflow HITL")
-        print(f"Recorded decision '{decision}' for {tx_id}.")
-        return decision
+        return persist_hitl_decision(review_output, tx_id)
 
     review_rows = build_review_payloads(collect_pending())
     tx_ids = extract_tx_ids(review_rows)
     hitl_payloads = to_hitl_payloads(review_rows)
+    references = register_hitl_references(tx_ids)
 
     review = HITLOperator.partial(
         task_id="await_reviewer_decision",
@@ -119,6 +141,8 @@ def fraud_hitl_review():
         # 24-hour SLA: if no one responds, mark as "Needs further investigation".
         response_timeout=timedelta(hours=24),
     ).expand_kwargs(hitl_payloads)
+
+    references >> review
 
     record_decision.expand(
         review_output=review.output,

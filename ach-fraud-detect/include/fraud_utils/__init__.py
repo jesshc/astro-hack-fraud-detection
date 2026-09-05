@@ -10,6 +10,8 @@ from .db import (
     fetch_flagged,
     fetch_pending_flagged,
     fetch_transaction,
+    fetch_hitl_reference,
+    register_hitl_tasks,
 )
 from .features import build_feature_frame, TRAINING_FEATURES
 from .generator import (

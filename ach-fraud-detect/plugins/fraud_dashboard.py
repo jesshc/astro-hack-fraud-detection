@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from airflow.plugins_manager import AirflowPlugin
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -31,6 +31,7 @@ from include.fraud_utils import (
     init_db,
     update_decision,
 )
+from include.fraud_utils.hitl import HITLResponseError, respond_to_hitl
 
 
 app = FastAPI(title="ACH Fraud Detection Dashboard", docs_url="/api/docs")
@@ -81,11 +82,29 @@ def api_transaction(tx_id: str) -> JSONResponse:
 
 
 @app.post("/api/decision/{tx_id}")
-def api_decision(tx_id: str, body: DecisionIn) -> JSONResponse:
+def api_decision(tx_id: str, body: DecisionIn, request: Request) -> JSONResponse:
     try:
+        tx = fetch_transaction(tx_id)
+        if not tx:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        if tx.get("human_decision"):
+            raise HTTPException(status_code=409, detail="Transaction already reviewed")
+        respond_to_hitl(
+            tx_id,
+            body.decision,
+            body.notes,
+            forwarded_headers=request.headers,
+        )
         ok = update_decision(tx_id, body.decision, body.notes)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HITLResponseError as exc:
+        detail = str(exc)
+        if exc.status_code:
+            detail = f"{detail}: {exc.body}"
+        raise HTTPException(status_code=502, detail=detail) from exc
+    except HTTPException:
+        raise
     if not ok:
         raise HTTPException(status_code=404, detail="Transaction not found")
 

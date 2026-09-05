@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS ach_payments (
     human_decision    TEXT,
     human_notes       TEXT,
     reviewed_at       TEXT,
+    hitl_dag_id       TEXT,
+    hitl_run_id       TEXT,
+    hitl_task_id      TEXT,
+    hitl_map_index    INTEGER,
     created_at        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_ach_ts ON ach_payments(ts DESC);
@@ -56,6 +60,19 @@ def connect():
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        existing_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(ach_payments)")
+        }
+        for column, column_type in (
+            ("hitl_dag_id", "TEXT"),
+            ("hitl_run_id", "TEXT"),
+            ("hitl_task_id", "TEXT"),
+            ("hitl_map_index", "INTEGER"),
+        ):
+            if column not in existing_columns:
+                conn.execute(
+                    f"ALTER TABLE ach_payments ADD COLUMN {column} {column_type}"
+                )
 
 
 def insert_transactions(rows: Iterable[dict[str, Any]]) -> int:
@@ -121,6 +138,37 @@ def update_decision(tx_id: str, decision: str, notes: str | None = None) -> bool
         return cur.rowcount > 0
 
 
+def register_hitl_tasks(
+    tx_ids: list[str], dag_id: str, run_id: str, task_id: str
+) -> None:
+    """Associate transactions with their dynamically mapped HITL tasks."""
+    with connect() as conn:
+        for map_index, tx_id in enumerate(tx_ids):
+            conn.execute(
+                """
+                UPDATE ach_payments
+                   SET hitl_dag_id = ?, hitl_run_id = ?, hitl_task_id = ?,
+                       hitl_map_index = ?
+                 WHERE id = ? AND human_decision IS NULL
+                """,
+                (dag_id, run_id, task_id, map_index, tx_id),
+            )
+
+
+def fetch_hitl_reference(tx_id: str) -> dict[str, Any] | None:
+    """Return the Airflow identity associated with a transaction."""
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT hitl_dag_id, hitl_run_id, hitl_task_id, hitl_map_index
+              FROM ach_payments
+             WHERE id = ?
+            """,
+            (tx_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     d = dict(row)
     if d.get("reasons"):
@@ -166,7 +214,7 @@ def fetch_flagged(limit: int = 100) -> list[dict[str, Any]]:
         rows = conn.execute(
             """
             SELECT * FROM ach_payments
-             WHERE is_suspicious = 1
+             WHERE is_suspicious = 1 AND human_decision IS NULL
              ORDER BY fraud_score DESC, ts DESC
              LIMIT ?
             """,
@@ -182,6 +230,7 @@ def fetch_pending_flagged(limit: int = 25) -> list[dict[str, Any]]:
             """
             SELECT * FROM ach_payments
              WHERE is_suspicious = 1 AND human_decision IS NULL
+                             AND hitl_dag_id IS NULL
              ORDER BY fraud_score DESC, ts DESC
              LIMIT ?
             """,
