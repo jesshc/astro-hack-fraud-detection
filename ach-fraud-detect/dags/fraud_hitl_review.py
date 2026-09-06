@@ -43,7 +43,7 @@ def persist_hitl_decision(review_output: dict, tx_id: str) -> str:
     params_input = review_output.get("params_input") or {}
     notes = params_input.get("notes") or "Recorded via Airflow HITL"
     update_decision(tx_id, decision, notes=notes)
-    print(f"Recorded decision '{decision}' for {tx_id}.")
+    print(f"Persist hitl decision '{decision}', {notes} for {tx_id}.")
     return decision
 
 
@@ -53,7 +53,9 @@ def persist_hitl_decision(review_output: dict, tx_id: str) -> str:
     schedule=[FLAGGED_ASSET],
     catchup=False,
     is_paused_upon_creation=False,
-    max_active_runs=3,
+    # Serialize asset-triggered runs so pending transactions cannot be
+    # collected by multiple runs before their HITL references are registered.
+    max_active_runs=1,
     default_args={
         "owner": "fraud-demo",
         "retries": 2,
@@ -65,10 +67,10 @@ def persist_hitl_decision(review_output: dict, tx_id: str) -> str:
 def fraud_hitl_review():
     @task
     def collect_pending() -> list[dict]:
-        """Grab up to 10 flagged ACH payments with no human decision yet."""
+        """Grab every unassigned flagged ACH payment for this review run."""
         from include.fraud_utils import fetch_pending_flagged
 
-        pending = fetch_pending_flagged(limit=10)
+        pending = fetch_pending_flagged(limit=None)
         print(f"Found {len(pending)} pending flagged ACH payments to review.")
         return pending
 
@@ -123,10 +125,10 @@ def fraud_hitl_review():
             task_id="await_reviewer_decision",
         )
 
-    @task(trigger_rule="all_done")
-    def record_decision(review_output: dict, tx_id: str) -> str:
-        """Write the human's chosen decision back to SQLite."""
-        return persist_hitl_decision(review_output, tx_id)
+    # @task(trigger_rule="all_done")
+    # def record_decision(review_output: dict, tx_id: str) -> str:
+    #     """Write the human's chosen decision back to SQLite."""
+    #     return persist_hitl_decision(review_output, tx_id)
 
     review_rows = build_review_payloads(collect_pending())
     tx_ids = extract_tx_ids(review_rows)
@@ -144,10 +146,10 @@ def fraud_hitl_review():
 
     references >> review
 
-    record_decision.expand(
-        review_output=review.output,
-        tx_id=tx_ids,
-    )
+    # record_decision.expand(
+    #     review_output=review.output,
+    #     tx_id=tx_ids,
+    # )
 
 
 fraud_hitl_review()

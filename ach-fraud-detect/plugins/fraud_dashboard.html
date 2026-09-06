@@ -275,9 +275,25 @@
   </section>
 
   <section class="panel" style="margin-top: 24px;">
-    <h2>All ACH payments</h2>
+    <h2>Reviewed Payments</h2>
     <div class="body">
-      <table id="recent-table">
+      <table id="reviewed-table">
+        <thead><tr>
+          <th class="sortable" data-sort="time_desc">Time<span class="sort-icon">▼</span></th>
+          <th class="sortable" data-sort="amount_desc">Amount<span class="sort-icon">◆</span></th>
+          <th>Receiver</th><th>States</th><th>Channel</th>
+          <th class="sortable" data-sort="risk_desc">Risk<span class="sort-icon">◆</span></th>
+          <th class="sortable" data-sort="decision_asc">Decision<span class="sort-icon">◆</span></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top: 24px;">
+    <h2>Non-flagged Transactions</h2>
+    <div class="body">
+      <table id="non-flagged-table">
         <thead><tr>
           <th class="sortable" data-sort="time_desc">Time<span class="sort-icon">▼</span></th>
           <th class="sortable" data-sort="amount_desc">Amount<span class="sort-icon">◆</span></th>
@@ -383,7 +399,7 @@ function decisionSortValue(transaction) {
 }
 
 async function refreshFlagged() {
-  const r = await fetch(API + "/api/flagged?limit=50");
+  const r = await fetch(API + "/api/flagged");
   flaggedRows = await r.json();
   const tbody = document.querySelector("#flagged-table tbody");
   const rows = sortFlaggedRows(flaggedRows);
@@ -408,9 +424,14 @@ async function refreshFlagged() {
 async function refreshRecent() {
   const r = await fetch(API + "/api/transactions");
   const rows = sortRecentRows(await r.json());
-  const tbody = document.querySelector("#recent-table tbody");
+  renderPaymentRows("#reviewed-table tbody", rows.filter(t => t.human_decision), "No reviewed payments yet.");
+  renderPaymentRows("#non-flagged-table tbody", rows.filter(t => !t.is_suspicious), "No non-flagged transactions yet.");
+}
+
+function renderPaymentRows(selector, rows, emptyMessage) {
+  const tbody = document.querySelector(selector);
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color: var(--muted); padding: 32px;">No ACH payments available yet.</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color: var(--muted); padding: 32px;">${emptyMessage}</td></tr>`;
     return;
   }
   tbody.innerHTML = rows.map(t => `
@@ -558,7 +579,7 @@ document.querySelectorAll("#flagged-table th.sortable").forEach(th => {
   });
 });
 
-document.querySelectorAll("#recent-table th.sortable").forEach(th => {
+document.querySelectorAll("#reviewed-table th.sortable, #non-flagged-table th.sortable").forEach(th => {
   th.addEventListener("click", () => {
     const columnName = th.dataset.sort.replace(/_asc$|_desc$/, "");
     const currentBase = recentSort.replace(/_asc$|_desc$/, "");
@@ -571,7 +592,7 @@ document.querySelectorAll("#recent-table th.sortable").forEach(th => {
 });
 
 function updateRecentSortIcons() {
-  document.querySelectorAll("#recent-table th.sortable").forEach(th => {
+  document.querySelectorAll("#reviewed-table th.sortable, #non-flagged-table th.sortable").forEach(th => {
     const columnName = th.dataset.sort.replace(/_asc$|_desc$/, "");
     const isActive = columnName === recentSort.replace(/_asc$|_desc$/, "");
     th.classList.toggle("active", isActive);

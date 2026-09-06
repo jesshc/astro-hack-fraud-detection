@@ -69,7 +69,7 @@ def api_transactions(limit: int | None = None) -> JSONResponse:
 
 
 @app.get("/api/flagged")
-def api_flagged(limit: int = 100) -> JSONResponse:
+def api_flagged(limit: int | None = None) -> JSONResponse:
     return JSONResponse(fetch_flagged(limit=limit))
 
 
@@ -96,6 +96,7 @@ def api_decision(tx_id: str, body: DecisionIn, request: Request) -> JSONResponse
             forwarded_headers=request.headers,
         )
         ok = update_decision(tx_id, body.decision, body.notes)
+        print(f"[fraud_dashboard] updated decision for {tx_id}: {body.decision} {body.notes}")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HITLResponseError as exc:

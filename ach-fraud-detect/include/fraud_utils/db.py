@@ -211,34 +211,51 @@ def fetch_recent(limit: int | None = 50) -> list[dict[str, Any]]:
         return [_row_to_dict(r) for r in rows]
 
 
-def fetch_flagged(limit: int = 100) -> list[dict[str, Any]]:
+def fetch_flagged(limit: int | None = 100) -> list[dict[str, Any]]:
     with connect() as conn:
-        rows = conn.execute(
-            """
+        query = """
             SELECT * FROM ach_payments
-             WHERE is_suspicious = 1 AND human_decision IS NULL
+                         WHERE is_suspicious = 1
+                             AND human_decision IS NULL
+                             AND hitl_dag_id IS NOT NULL
              ORDER BY fraud_score DESC, ts DESC
-             LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
+        """
+        if limit is None:
+            rows = conn.execute(query).fetchall()
+        else:
+            rows = conn.execute(query + " LIMIT ?", (limit,)).fetchall()
         return [_row_to_dict(r) for r in rows]
 
 
-def fetch_pending_flagged(limit: int = 25) -> list[dict[str, Any]]:
+def fetch_pending_flagged(limit: int | None = 25) -> list[dict[str, Any]]:
     """Flagged ACH payments without a human decision yet."""
     with connect() as conn:
-        rows = conn.execute(
-            """
+        query = """
             SELECT * FROM ach_payments
              WHERE is_suspicious = 1 AND human_decision IS NULL
-                             AND hitl_dag_id IS NULL
+               AND hitl_dag_id IS NULL
              ORDER BY fraud_score DESC, ts DESC
-             LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
+        """
+        if limit is None:
+            rows = conn.execute(query).fetchall()
+        else:
+            rows = conn.execute(query + " LIMIT ?", (limit,)).fetchall()
         return [_row_to_dict(r) for r in rows]
+
+
+def count_pending_flagged() -> int:
+        """Count flagged transactions that still need an Airflow HITL task."""
+        with connect() as conn:
+                row = conn.execute(
+                        """
+                        SELECT COUNT(*)
+                            FROM ach_payments
+                         WHERE is_suspicious = 1
+                             AND human_decision IS NULL
+                             AND hitl_dag_id IS NULL
+                        """
+                ).fetchone()
+                return int(row[0]) if row else 0
 
 
 def fetch_transaction(tx_id: str) -> dict[str, Any] | None:
