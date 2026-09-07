@@ -33,20 +33,6 @@ FLAGGED_ASSET = Asset("flagged_transactions")
 DECISION_OPTIONS = ["Legitimate", "Fraud", "Needs further investigation"]
 
 
-def persist_hitl_decision(review_output: dict, tx_id: str) -> str:
-    """Persist the decision produced by Airflow's native HITL task."""
-    from include.fraud_utils import update_decision
-
-    review_output = review_output or {}
-    chosen = review_output.get("chosen_options") or []
-    decision = chosen[0] if chosen else "Needs further investigation"
-    params_input = review_output.get("params_input") or {}
-    notes = params_input.get("notes") or "Recorded via Airflow HITL"
-    update_decision(tx_id, decision, notes=notes)
-    print(f"Persist hitl decision '{decision}', {notes} for {tx_id}.")
-    return decision
-
-
 @dag(
     dag_id="fraud_hitl_review",
     start_date=datetime(2026, 1, 1),
@@ -125,11 +111,6 @@ def fraud_hitl_review():
             task_id="await_reviewer_decision",
         )
 
-    # @task(trigger_rule="all_done")
-    # def record_decision(review_output: dict, tx_id: str) -> str:
-    #     """Write the human's chosen decision back to SQLite."""
-    #     return persist_hitl_decision(review_output, tx_id)
-
     review_rows = build_review_payloads(collect_pending())
     tx_ids = extract_tx_ids(review_rows)
     hitl_payloads = to_hitl_payloads(review_rows)
@@ -145,11 +126,5 @@ def fraud_hitl_review():
     ).expand_kwargs(hitl_payloads)
 
     references >> review
-
-    # record_decision.expand(
-    #     review_output=review.output,
-    #     tx_id=tx_ids,
-    # )
-
 
 fraud_hitl_review()
