@@ -1,114 +1,178 @@
-# ACH Fraud Detection
+# ACH Payment Fraud Detector
 
-ACH payment fraud detector is an Airflow-powered application that combines machine learning, interpretable risk reasons, and human review in one workflow.
+ACH Payment Fraud Detector is an Airflow-powered fraud detection system that combines machine learning with human-in-the-loop (HITL) review to help financial institutions efficiently identify fraudulent payments.
 
-The project simulates live ACH payments, scores them with a trained RandomForest model, stores the results in SQLite, and presents suspicious transactions to a reviewer through a custom dashboard.
+ACH (Automated Clearing House) payments are electronic bank-to-bank money transfer transactions, commonly used for direct deposits, bill payments, payroll, and business transactions. Financial institutions process millions of these payments every day, making it impractical for fraud monitoring personnel to manually investigate every suspicious transaction.
 
-## Why this matters
+This application helps employees of financial institutions focus their attention on high-risk payments by automating fraud detection, while keeping humans in the loop for final review.
 
-Fraud detection is not only a classification problem. A useful system must also:
+## What does this project do?
 
-- process payments continuously;
-- surface understandable reasons for a risk decision;
-- preserve an audit trail;
-- route high-risk cases to a person;
-- make the current state easy to inspect.
+This project simulates how financial institutions could use Airflow and machine learning to automate the workflow of detecting suspicious ACH transactions and presenting them to bank personnel for final assessment through a centralized web dashboard. Since real world banking transactions cannot be acquired, all data presented in this project is synthetically generated and modeled based on the real world ACH data defined by the National Automated Clearing House Association (NACHA).
 
-This demo focuses on that complete loop instead of showing an isolated model prediction.
+Before the Airflow workflows run, the `scripts/generate_seed_data.py` script generates an initial labeled training dataset of 5,000 synthetic ACH payment records. The dataset includes payment attributes and synthetic fraud labels that are used to train a RandomForest machine learning model. The generated training data file is included in the repository at `include/data/ach_payments.csv`.
 
-## What the project does
+To simulate incoming payments, the application continuously generates a batch of 15 synthetic ACH payments every 2 minutes. It then evaluates each transaction using the trained ML model. he ML model evaluates each new payment and tags a fraud risk score, ranging from 0 to 1. Payments with a score of 0.55 or higher are considered potential fraud and flagged for human review. explanations highlighting the factors that contributed to their risk score.
 
-1. Generates a reproducible labeled ACH dataset for model training.
-2. Runs `fraud_bootstrap` once to initialize storage and train a RandomForest classifier.
-3. Runs `fraud_stream` every two minutes to generate a batch of 15 unlabeled payments.
-4. Converts payment attributes into model features and produces a fraud risk score.
-5. Applies transparent rules to add human-readable explanations such as unusually large amounts, new receivers, unusual hours, cross-state payments, and young accounts.
-6. Marks payments at or above the `0.55` risk threshold as suspicious and stores all payments in SQLite.
-7. Emits a `flagged_transactions` Airflow Asset when a batch contains suspicious payments.
-8. Starts `fraud_hitl_review`, which creates one human review action per unresolved flagged payment.
-9. Displays recent payments, risk scores, explanations, KPIs, and decisions in the ACH Fraud Dashboard.
+Flagged transactions are displayed on the web dashboard which provides an interface for fraud monitoring personnel to review the transaction details and classify them as:
+
+- **Legitimate**
+- **Fraudulent**
+- **Needs Further Investigation**
+
+Reviewers' decisions are recorded in the database and reflected on the dashboard at real-time.
 
 ## How it works
 
-```mermaid
-flowchart LR
-    Seed[Seed data generator] --> Bootstrap[fraud_bootstrap\ntrain model + init DB]
-    Bootstrap --> Stream[fraud_stream\nrun every 2 minutes]
-    Stream --> Generate[Generate ACH batch]
-    Generate --> Score[RandomForest risk score]
-    Score --> Explain[Rule-based explanations]
-    Explain --> Store[(SQLite\nach_payments)]
-    Explain --> Flag{Risk >= 0.55?}
-    Flag -->|Yes| Asset[flagged_transactions Asset]
-    Asset --> Review[fraud_hitl_review\nHITL actions]
-    Review --> Store
-    Store --> Dashboard[FastAPI dashboard]
-```
+### 1. Generate the initial training data for machine learning model
 
-### Airflow orchestration
+The `scripts/generate_seed_data.py` script is used to create the initial labeled dataset to train the RandomForest machine learning model. It generates 5,000 synthetic ACH payment records with realistic transaction attributes and synthetic fraud labels, then saves them to `include/data/ach_payments.csv`.
 
-- `fraud_bootstrap` uses an `@once` schedule. It creates the database schema and saves the model to `include/models/ach_fraud_model.joblib`.
-- `fraud_stream` runs every two minutes and waits for the bootstrap DAG's `train_model` task before scoring payments. Its score task also checks that the model file exists.
-- `fraud_hitl_review` is scheduled by the `flagged_transactions` Asset. It fetches unresolved suspicious payments and dynamically maps review tasks over them.
+The seed dataset is already included in the repository, so you do not need to run `generate_seed_data.py` when running the application.
 
-### Detection approach
+Note: Airflow is not used in this step
 
-The model is trained from synthetic labeled data. Features include amount, log amount, timestamp-derived fields, account age, ACH SEC code, payment type, channel, and whether the originator and receiver are in different states.
+### 2. Bootstrap and ML model setup
 
-The model provides a probability-like risk score. The rule engine adds context that a reviewer can understand. A payment is stored as suspicious when its score is at least `0.55` or the rule engine finds a reason to flag it.
+The project starts with the `fraud_bootstrap` DAG, which handles a one-time setup for the application.
 
-Live payments intentionally do not include their synthetic ground-truth fraud label. That keeps the streaming path closer to the real problem: the system must make a decision using available transaction data, then let a human reviewer provide the final outcome.
+This DAG:
 
-## Dashboard
+- Creates the SQLite database schema for ACH transactions and metadata for recording human review
+- Loads the synthetic training data from include/data/ach_payments.csv
+- Trains a RandomForest ML model
+- Saves the trained model to `include/models/ach_fraud_model.joblib`
 
-The plugin mounts the dashboard at:
+The bootstrap workflow runs before the streaming pipeline so that the database and the trained model are ready before new payments are generated and processed.
 
-```text
-/fraud-dashboard/
-```
+### 3. Stream incoming ACH transactions
 
-It provides:
+The `fraud_stream` DAG runs every 2 minutes to simulate a new batch of incoming live ACH payments.
 
-- total payment and review KPIs;
-- recent ACH payments with risk and decision status;
-- a sortable flagged-payment table;
-- transaction details and stored explanations;
-- Legitimate, Fraud, and Needs Investigation actions;
-- reviewer notes persisted alongside the decision.
+For each batch, it:
 
-Payments below the review threshold are shown as **Not flagged**, because they are not eligible for a human fraud decision in this workflow.
+- Generates 15 synthetic ACH transactions
+- Marks each transaction with a fraud risk score using the trained RandomForest model
+- Flags any transaction with a fraud score of 0.55 or higher
+- Generates reasons that explain why a transaction is flagged as high-risk
+- Stores transaction data, risk scores, and explanations of all transactions in the batch into the SQLite database
 
-## Run locally
+If the batch contains any flagged transactions, an Airflow asset named `flagged_transactions` gets emitted to trigger the next `fraud_hitl_review` DAG.
 
-Prerequisites:
+### 4. Create the HITL review tasks
 
-- Docker
-- Astro CLI
+When the `flagged_transactions` asset is emitted, the `fraud_hitl_review` DAG loads the pending flagged transactions from SQLite and creates a human-in-the-loop review task for each payment.
 
-From this directory:
+For each transaction, the DAG
+
+- Loads the payment details and fraud-risk information
+- Builds a review payload containing the transaction amount, risk score, and reasons for flagging
+- Registers the Airflow mapping information needed to identify the corresponding HITL task
+- Creates a `HITLOperator` task for the transaction with a `Choice Required` state.
+
+The flagged high-risk transactions are displayed in the Flagged ACH Payments section of the web dashboard. Each flagged transaction is mapped to a HITL review task in Airflow. The human reviewer can select a particular flagged payment from the dashboard to review its transaction details and mark the transaction with one of the following decisions:
+
+- Legitimate
+- Fraud
+- Needs Further Investigation
+
+Once the reviewer submits the decision, the transaction data in SQLite gets updated with the human decision. The transaction's corresponding HITL task in Airflow also gets updated with a `Choice Received` state.
+
+## What was hard?
+
+**Keeping transactions displayed in dashboard synchronized with Airflow HITL tasks**
+
+One challenge I faced was ensuring that the human decision for each flagged ACH payments submitted through the dashboard remained synchronized with their underlying Airflow HITL tasks in Airflow UI’s Required Actions queue.
+
+It was challenging to coordinate states across three layers:
+
+- **Custom web dashboard** — where reviewers submit decisions
+- **SQLite database** — where transaction and review state is persisted
+- **Airflow HITL task state** — where the underlying human review tasks is managed
+
+To solve this, when a reviewer submits a decision, the application first updates the database with the human decision and then uses HITL REST API to resolve the corresponding review task in Airflow.
+
+This keeps the dashboard and Airflow’s Required Actions interface consistent, preventing orphaned pending tasks and ensuring both systems reflect the same review outcome.
+
+## How to run locally
+
+### Prerequisites
+
+Make sure both Docker Desktop and Astro CLI are installed on your machine:
+
+- [Docker](https://www.docker.com/)
+- [Astro CLI](https://www.astronomer.io/docs/astro/cli/install-cli)
+
+### Start the Application
+
+Clone the repository and start the local Airflow environment:
 
 ```bash
 cd ach-fraud-detect
 astro dev start
-python3 scripts/generate_seed_data.py
 ```
 
-Open the Airflow UI at the URL printed by Astro, then:
+The repository already includes the seed ACH payment training dataset in:
 
-1. Confirm `fraud_bootstrap` completes and creates the model.
-2. Watch `fraud_stream` run on its two-minute schedule.
-3. Open **ACH Fraud Dashboard** from the Airflow navigation.
-4. Select a flagged payment and submit a decision, or use **Browse -> Required Actions**.
+```text
+include/data/ach_payments.csv
+```
 
-To stop and remove the local Airflow environment, including its metadata database and Docker volumes:
+Once the environment is running, open the **Airflow UI** at the URL printed by Astro. The application is designed to initialize and begin processing automatically.
+
+**1. Monitor the DAGs in Airflow UI**
+
+The `fraud_bootstrap` DAG runs the one-time initialization steps, including:
+
+- Initializing the SQLite database
+- Training the fraud detection model
+
+After it completes, the following files should be created:
+
+```text
+include/data/ach_fraud.db
+include/models/ach_fraud_model.joblib
+```
+
+The `fraud_stream` DAG then begins generating and scoring batches of synthetic ACH payments every **2 minutes**.
+
+**2. Open the ACH Fraud Dashboard link in Airflow UI**
+
+Locate the left-side menu bar in Airflow UI. Click on:
+
+```text
+Browse → ACH Fraud Dashboard
+```
+
+This step will bring up ACH Payment Fraud Detection Dashboard which is the web interface for users to monitor transactions, view flagged payments, and submit review decisions.
+
+**3. Stop Application **
+
+When done viewing the web dashboard, you can stop the Airflow processes by running:
+
+```bash
+astro dev stop
+```
+
+## Troubleshooting
+
+If the DAGs fail due to database corruption or stale local state, remove the generated database and ML model files:
+
+```bash
+rm include/data/ach_fraud.db
+rm include/models/ach_fraud_model.joblib
+```
+
+Then reset the local Airflow environment:
 
 ```bash
 astro dev kill
+astro dev start
 ```
 
-The command removes runtime data, but it does not restore or delete files in the project directory.
+The `fraud_bootstrap` DAG will recreate the database and retrain the ML model.
 
-## Project layout
+## Project structure
 
 | Path                               | Purpose                                                             |
 | ---------------------------------- | ------------------------------------------------------------------- |
@@ -116,45 +180,14 @@ The command removes runtime data, but it does not restore or delete files in the
 | `dags/fraud_stream.py`             | Recurring payment generation, scoring, explanation, and persistence |
 | `dags/fraud_hitl_review.py`        | Asset-triggered human review workflow                               |
 | `include/fraud_utils/generator.py` | Synthetic training and live payment generation                      |
-| `include/fraud_utils/features.py`  | Feature engineering shared by training and scoring                  |
-| `include/fraud_utils/reasons.py`   | Explainable rule-based fraud reasons                                |
-| `include/fraud_utils/db.py`        | SQLite schema, queries, and human decision persistence              |
-| `plugins/fraud_dashboard.py`       | FastAPI plugin registration and API endpoints                       |
-| `plugins/fraud_dashboard.html`     | Dashboard user interface                                            |
-| `tests/dags/`                      | DAG import, tags, retry, and dashboard checks                       |
+| `include/fraud_utils/features.py`  | Shared feature engineering                                          |
+| `include/fraud_utils/reasons.py`   | Explainable fraud-risk reasons                                      |
+| `include/fraud_utils/db.py`        | Database schema, queries, and review persistence                    |
+| `plugins/fraud_dashboard.py`       | FastAPI dashboard registration and API endpoints                    |
+| `plugins/fraud_dashboard.html`     | Dashboard UI                                                        |
 
-## What was hard
+## Future improvements
 
-### Making the demo feel like a real streaming system
+The current model is trained once during the bootstrap phase and then used to score incoming transactions. A key next step would be to create a **continuous model retraining loop**.
 
-Training data has labels, but live payments do not. The generator therefore uses one path for reproducible labeled training examples and another path for unlabeled live batches. Keeping their schemas and feature transformations compatible while removing the live fraud label was important for a credible simulation.
-
-### Combining model output with explanations
-
-A model score alone does not tell a reviewer why a payment is risky. The rule engine examines the transaction and recent originator history to produce concrete reasons. It also has to tolerate an empty history and avoid treating every low-risk payment as a review case.
-
-### Coordinating a one-time bootstrap with a recurring DAG
-
-The stream must not race the model-training DAG. Bootstrap runs once, while the stream runs repeatedly, so the stream includes an explicit cross-DAG wait for the successful `train_model` task plus a model-file check at scoring time. This protects both the normal startup path and the case where runtime state has been recreated.
-
-### Closing the human-in-the-loop loop
-
-The review workflow dynamically creates actions only for unresolved flagged payments. Decisions can arrive from Airflow's Required Actions UI or the custom dashboard, so both paths share the same SQLite update function and remain visible in the same dashboard.
-
-### Keeping the demo inspectable
-
-SQLite keeps the project self-contained and easy to reset, query, and explain during a hackathon demo. It is deliberately a lightweight demo store rather than a production banking database; a production deployment would use a durable managed database, stronger identity and access controls, and additional operational safeguards.
-
-## Validation
-
-The DAG integrity suite runs inside the Astro Runtime image:
-
-```bash
-astro dev pytest tests/dags/test_dag_integrity.py --args "-q"
-```
-
-The suite verifies DAG imports, tags, retry configuration, and the dashboard API prefix.
-
-## Limitations and next steps
-
-This is a hackathon demo using synthetic data and a local SQLite database. A production version would need calibrated model probabilities, feature and model versioning, drift monitoring, a managed transactional store, authentication and authorization, encrypted data handling, stronger audit controls, and a broader test set with domain-reviewed fraud labels.
+As transactions are reviewed by humans, their decisions could become new labeled training data. Periodically retraining the ML model on this newly reviewed data would allow it to learn from emerging fraud patterns and reduce reliance on a static model.

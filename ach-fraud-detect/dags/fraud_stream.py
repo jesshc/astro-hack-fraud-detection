@@ -83,7 +83,7 @@ def fraud_stream():
     @task
     def flag_and_persist(batch: list[dict]) -> dict:
         """Explain, flag, and save the scored payments to SQLite."""
-        from include.fraud_utils import insert_transactions
+        from include.fraud_utils import count_pending_flagged, insert_transactions
         from include.fraud_utils.reasons import explain
 
         flagged = 0
@@ -97,14 +97,25 @@ def fraud_stream():
                 flagged += 1
 
         inserted = insert_transactions(batch)
-        print(f"Persisted {inserted} ACH payments; flagged {flagged}.")
-        return {"inserted": inserted, "flagged": flagged}
+        pending_for_review = count_pending_flagged()
+        print(
+            f"Persisted {inserted} ACH payments; flagged {flagged}; "
+            f"unassigned reviews {pending_for_review}."
+        )
+        return {
+            "inserted": inserted,
+            "flagged": flagged,
+            "pending_for_review": pending_for_review,
+        }
 
     @task(outlets=[FLAGGED_ASSET])
     def announce_if_flagged(summary: dict) -> dict:
         """Emit the Asset only when this batch produced new flags."""
-        if summary.get("flagged", 0) > 0:
-            print(f"New flags in this batch: {summary['flagged']} - emitting asset.")
+        if summary.get("pending_for_review", 0) > 0:
+            print(
+                "Pending flagged transactions need HITL tasks; "
+                "emitting asset."
+            )
         else:
             print("No new flags this batch.")
         return summary

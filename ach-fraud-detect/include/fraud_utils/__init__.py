@@ -9,7 +9,10 @@ from .db import (
     fetch_recent,
     fetch_flagged,
     fetch_pending_flagged,
+    count_pending_flagged,
     fetch_transaction,
+    fetch_hitl_reference,
+    register_hitl_tasks,
 )
 from .features import build_feature_frame, TRAINING_FEATURES
 from .generator import (
@@ -28,6 +31,7 @@ __all__ = [
     "fetch_recent",
     "fetch_flagged",
     "fetch_pending_flagged",
+    "count_pending_flagged",
     "fetch_transaction",
     "build_feature_frame",
     "TRAINING_FEATURES",
