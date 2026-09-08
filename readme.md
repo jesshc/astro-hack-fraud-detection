@@ -10,7 +10,7 @@ This application helps employees of financial institutions focus their attention
 
 This project simulates how financial institutions could use Airflow and machine learning to automate the workflow of detecting suspicious ACH transactions and presenting them to bank personnel for final assessment through a centralized web dashboard. Since real world banking transactions cannot be acquired, all data presented in this project is synthetically generated and modeled based on the real world ACH data defined by the National Automated Clearing House Association (NACHA).
 
-Before the Airflow workflows run, the [`scripts/generate_seed_data.py`](scripts/generate_seed_data.py) script generates an initial labeled training dataset of 5,000 synthetic ACH payment records. The dataset includes payment attributes and synthetic fraud labels that are used to train a RandomForest machine learning model. The generated training data file is included in the repository at [`include/data/ach_payments.csv`](include/data/ach_payments.csv).
+Before the Airflow workflows run, the [`scripts/generate_seed_data.py`](ach-fraud-detect/scripts/generate_seed_data.py) script generates an initial labeled training dataset of 5,000 synthetic ACH payment records. The dataset includes payment attributes and synthetic fraud labels that are used to train a RandomForest machine learning model. The generated training data file is included in the repository at [`include/data/ach_payments.csv`](ach-fraud-detect/include/data/ach_payments.csv).
 
 To simulate incoming payments, the application continuously generates a batch of 15 synthetic ACH payments every 2 minutes. It then evaluates each transaction using the trained ML model. he ML model evaluates each new payment and tags a fraud risk score, ranging from 0 to 1. Payments with a score of 0.55 or higher are considered potential fraud and flagged for human review. explanations highlighting the factors that contributed to their risk score.
 
@@ -26,7 +26,7 @@ Reviewers' decisions are recorded in the database and reflected on the dashboard
 
 ### 1. Generate the initial training data for machine learning model
 
-The [`scripts/generate_seed_data.py`](scripts/generate_seed_data.py) script is used to create the initial labeled dataset to train the RandomForest machine learning model. It generates 5,000 synthetic ACH payment records with realistic transaction attributes and synthetic fraud labels, then saves them to [`include/data/ach_payments.csv`](include/data/ach_payments.csv).
+The [`scripts/generate_seed_data.py`](ach-fraud-detect/scripts/generate_seed_data.py) script is used to create the initial labeled dataset to train the RandomForest machine learning model. It generates 5,000 synthetic ACH payment records with realistic transaction attributes and synthetic fraud labels, then saves them to [`include/data/ach_payments.csv`](ach-fraud-detect/include/data/ach_payments.csv).
 
 The seed dataset is already included in the repository, so you do not need to run `generate_seed_data.py` when running the application.
 
@@ -39,9 +39,9 @@ The project starts with the `fraud_bootstrap` DAG, which handles a one-time setu
 This DAG:
 
 - Creates the SQLite database schema for ACH transactions and metadata for recording human review
-- Loads the synthetic training data from [`include/data/ach_payments.csv`](include/data/ach_payments.csv)
+- Loads the synthetic training data from [`include/data/ach_payments.csv`](ach-fraud-detect/include/data/ach_payments.csv)
 - Trains a RandomForest ML model
-- Saves the trained model to [`include/models/ach_fraud_model.joblib`](include/models/ach_fraud_model.joblib)
+- Saves the trained model to [`include/models/ach_fraud_model.joblib`](ach-fraud-detect/include/models/ach_fraud_model.joblib)
 
 The bootstrap workflow runs before the streaming pipeline so that the database and the trained model are ready before new payments are generated and processed.
 
@@ -112,7 +112,7 @@ cd ach-fraud-detect
 astro dev start
 ```
 
-The repository already includes the seed ACH payment training dataset at [`include/data/ach_payments.csv`](include/data/ach_payments.csv).
+The repository already includes the seed ACH payment training dataset at [`include/data/ach_payments.csv`](ach-fraud-detect/include/data/ach_payments.csv).
 
 Once the environment is running, open the **Airflow UI** at the URL printed by Astro. The application is designed to initialize and begin processing automatically.
 
@@ -125,8 +125,8 @@ The `fraud_bootstrap` DAG runs the one-time initialization steps, including:
 
 After it completes, the following files should be created:
 
-- [`include/data/ach_fraud.db`](include/data/ach_fraud.db)
-- [`include/models/ach_fraud_model.joblib`](include/models/ach_fraud_model.joblib)
+- [`include/data/ach_fraud.db`](ach-fraud-detect/include/data/ach_fraud.db)
+- [`include/models/ach_fraud_model.joblib`](ach-fraud-detect/include/models/ach_fraud_model.joblib)
 
 The `fraud_stream` DAG then begins generating and scoring batches of synthetic ACH payments every **2 minutes**.
 
@@ -168,17 +168,17 @@ The `fraud_bootstrap` DAG will recreate the database and retrain the ML model.
 
 ## Project structure
 
-| Path                                                                   | Purpose                                                             |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| [`dags/fraud_bootstrap.py`](dags/fraud_bootstrap.py)                   | One-time database initialization and model training                 |
-| [`dags/fraud_stream.py`](dags/fraud_stream.py)                         | Recurring payment generation, scoring, explanation, and persistence |
-| [`dags/fraud_hitl_review.py`](dags/fraud_hitl_review.py)               | Asset-triggered human review workflow                               |
-| [`include/fraud_utils/generator.py`](include/fraud_utils/generator.py) | Synthetic training and live payment generation                      |
-| [`include/fraud_utils/features.py`](include/fraud_utils/features.py)   | Shared feature engineering                                          |
-| [`include/fraud_utils/reasons.py`](include/fraud_utils/reasons.py)     | Explainable fraud-risk reasons                                      |
-| [`include/fraud_utils/db.py`](include/fraud_utils/db.py)               | Database schema, queries, and review persistence                    |
-| [`plugins/fraud_dashboard.py`](plugins/fraud_dashboard.py)             | FastAPI dashboard registration and API endpoints                    |
-| [`plugins/fraud_dashboard.html`](plugins/fraud_dashboard.html)         | Dashboard UI                                                        |
+| Path                                                                                    | Purpose                                                             |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| [`dags/fraud_bootstrap.py`](ach-fraud-detect/dags/fraud_bootstrap.py)                   | One-time database initialization and model training                 |
+| [`dags/fraud_stream.py`](ach-fraud-detect/dags/fraud_stream.py)                         | Recurring payment generation, scoring, explanation, and persistence |
+| [`dags/fraud_hitl_review.py`](ach-fraud-detect/dags/fraud_hitl_review.py)               | Asset-triggered human review workflow                               |
+| [`include/fraud_utils/generator.py`](ach-fraud-detect/include/fraud_utils/generator.py) | Synthetic training and live payment generation                      |
+| [`include/fraud_utils/features.py`](ach-fraud-detect/include/fraud_utils/features.py)   | Shared feature engineering                                          |
+| [`include/fraud_utils/reasons.py`](ach-fraud-detect/include/fraud_utils/reasons.py)     | Explainable fraud-risk reasons                                      |
+| [`include/fraud_utils/db.py`](ach-fraud-detect/include/fraud_utils/db.py)               | Database schema, queries, and review persistence                    |
+| [`plugins/fraud_dashboard.py`](ach-fraud-detect/plugins/fraud_dashboard.py)             | FastAPI dashboard registration and API endpoints                    |
+| [`plugins/fraud_dashboard.html`](ach-fraud-detect/plugins/fraud_dashboard.html)         | Dashboard UI                                                        |
 
 ## Future improvements
 
